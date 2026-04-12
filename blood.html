@@ -7,49 +7,92 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <style>
+    /* Blood group badge — large & prominent */
+    .blood-group-badge {
+      width: 56px; height: 56px; border-radius: 14px; flex-shrink: 0;
+      background: var(--red-glow); border: 2px solid rgba(232,25,44,0.5);
+      display: flex; align-items: center; justify-content: center;
+      font-family: var(--font-mono); font-weight: 700; color: var(--red);
+      font-size: 1.1rem; box-shadow: 0 0 12px rgba(232,25,44,0.25);
+    }
+    .donor-row {
+      background: var(--dark-3); border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px; padding: 1rem 1.2rem;
+      display: flex; align-items: center; gap: 1rem;
+      transition: all 0.2s; margin-bottom: 0.7rem;
+    }
+    .donor-row:hover { border-color: rgba(232,25,44,0.3); background: var(--dark-4); }
+    .donor-row .donor-meta { flex: 1; min-width: 0; }
+    .donor-row .donor-name { font-weight: 600; font-size: 0.95rem; color: var(--white); }
+    .donor-row .donor-sub  { font-size: 0.78rem; color: var(--slate); margin-top: 0.18rem; }
+    .realtime-dot { display: inline-block; width:7px; height:7px; border-radius:50%;
+                    background:var(--green); box-shadow:0 0 6px var(--green);
+                    animation: pulse-dot 2s infinite; margin-right:4px; }
+  </style>
 </head>
 <body class="bg-dots" data-page="blood">
 
 <script type="module">
 import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
          getBloodBankInventory, getAvailableBloodByType,
-         submitBloodRequest, db } from './firebase-db.js';
-import { collection, getDocs, query, where }
+         submitBloodRequest, listenBloodRequests, db } from './firebase-db.js';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { injectShell, updateLocationDisplay, initMap } from './shell.js';
 
 injectShell();
 
-let currentUser = null;
+let currentUser    = null;
 let currentProfile = null;
-let userCoords = [12.9716, 77.5946];
-let bloodMap = null;
-let allBanks = [];
-let mapMarkers = [];
+let userCoords     = [13.2459, 77.7116]; // Default: Devanahalli
+let bloodMap       = null;
+let allBanks       = [];
+let mapMarkers     = [];
+let donorListener  = null; // real-time listener unsubscribe
 
+// ── Auth Guard ──────────────────────────────────────────────
 onAuthChange(async user => {
   if (!user) { window.location.href = 'login.html'; return; }
-  currentUser = user;
+  currentUser    = user;
+  window._currentUid = user.uid;
   currentProfile = await getUserProfile(user.uid);
-  const displayName = currentProfile?.name || user.displayName || 'User';
-  const initial     = displayName[0]?.toUpperCase() || 'U';
-  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = displayName);
+
+  const name    = currentProfile?.name || user.displayName || 'User';
+  const initial = name[0]?.toUpperCase() || 'U';
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = name);
   document.querySelectorAll('.user-avatar-char').forEach(el  => el.textContent = initial);
   if (currentProfile?.bloodType) {
     document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = currentProfile.bloodType);
   }
+
   startGeolocation();
+
+  // ── Real-time listener: incoming blood requests for this donor ──
+  if (currentProfile?.bloodType && currentProfile?.willDonate) {
+    donorListener = listenBloodRequests(currentProfile.bloodType, reqs => {
+      if (reqs.length > 0) {
+        const latest = reqs[0];
+        // Only popup for requests NOT from current user
+        if (latest.requesterId !== currentUser.uid) {
+          document.getElementById('notif-title').textContent = '🩸 Blood Request for You!';
+          document.getElementById('notif-body').textContent  =
+            `Someone nearby urgently needs ${latest.bloodType} blood. Urgency: ${latest.urgency?.toUpperCase()}. Will you help?`;
+          document.getElementById('notif-overlay').classList.remove('hidden');
+        }
+      }
+    });
+  }
 });
 
 document.getElementById('sign-out-btn').addEventListener('click', async () => {
+  if (donorListener) donorListener(); // unsubscribe
   await logoutUser(); window.location.href = 'login.html';
 });
 
+// ── Geolocation ─────────────────────────────────────────────
 function startGeolocation() {
-  const fallback = () => {
-    updateLocationDisplay(userCoords);
-    loadBloodData();
-  };
+  const fallback = () => { updateLocationDisplay(userCoords); loadBloodData(); };
   if (!navigator.geolocation) { fallback(); return; }
   navigator.geolocation.getCurrentPosition(pos => {
     userCoords = [pos.coords.latitude, pos.coords.longitude];
@@ -59,67 +102,85 @@ function startGeolocation() {
   }, fallback);
 }
 
-// Simulate incoming blood request notification for donors
-setTimeout(() => {
-  if (currentProfile && currentProfile.willDonate) {
-    document.getElementById('notif-title').textContent = '🩸 Blood Request Incoming';
-    document.getElementById('notif-body').textContent =
-      `A patient 0.8km away needs ${currentProfile.bloodType} blood urgently. You are a matching donor. Please respond.`;
-    document.getElementById('notif-overlay').classList.remove('hidden');
-  }
-}, 15000);
-
+// ── Load data ───────────────────────────────────────────────
 async function loadBloodData() {
   allBanks = await getBloodBankInventory();
   initBloodMap();
   renderBankList(allBanks);
-  await loadDonorMembers();
+  startRealtimeDonors(); // real-time donor list
 }
 
-// ── Load donor members from Firestore users collection ──
-async function loadDonorMembers() {
-  try {
-    const snap = await getDocs(query(collection(db, 'users'), where('willDonate', '==', true)));
-    const donors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+// ── Real-time donor list via onSnapshot ────────────────────
+function startRealtimeDonors() {
+  const q = query(collection(db, 'users'), where('willDonate', '==', true));
+  onSnapshot(q, snap => {
+    const donors = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => d.id !== currentUser?.uid); // exclude self
     renderDonorMembers(donors);
-  } catch(e) {
-    console.warn('Could not load donors:', e);
-  }
+  });
 }
 
+// ── Render donor cards with prominent blood group ──────────
 function renderDonorMembers(donors) {
   const list = document.getElementById('donor-member-list');
   if (!list) return;
+
+  const countEl = document.getElementById('donor-count');
+  if (countEl) countEl.textContent = donors.length;
+
   if (!donors.length) {
-    list.innerHTML = '<div style="color:var(--slate);font-size:0.85rem;padding:1rem;">No donors registered yet.</div>';
+    list.innerHTML = `<div class="donor-row" style="justify-content:center;color:var(--slate);">
+      No donors registered yet. Seed the database first.</div>`;
     return;
   }
+
   list.innerHTML = donors.map(d => {
-    const name    = d.name || 'Anonymous Donor';
-    const initial = name[0]?.toUpperCase() || 'D';
-    const city    = d.city || d.address?.split(',').slice(-2,-1)[0]?.trim() || 'Nearby';
+    const name  = d.name  || 'Anonymous Donor';
+    const blood = d.bloodType || '?';
+    const city  = d.city  || 'Nearby';
+    const phone = d.phone || '';
+    // Mask: show first name + last initial only
+    const parts    = name.trim().split(' ');
+    const masked   = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
+    const bloodCol = blood === 'O-' ? '#FF6B6B' : blood === 'AB+' ? '#9B6FFF' : 'var(--red)';
+
     return `
-    <div class="donor-card card-hover">
-      <div class="donor-blood-badge">${d.bloodType || '?'}</div>
-      <div class="donor-info">
-        <div class="donor-name-masked" style="color:var(--white);">🔒 ${name.split(' ')[0]} ${name.split(' ')[1]?.[0] || ''}.</div>
-        <div class="donor-id font-mono">${d.id}</div>
-        <div class="donor-distance" style="margin-top:0.2rem;">
+    <div class="donor-row">
+      <!-- BLOOD GROUP — large badge -->
+      <div class="blood-group-badge" style="color:${bloodCol};border-color:${bloodCol}33;
+           background:${bloodCol}18;font-size:${blood.length>2?'0.9rem':'1.15rem'};">
+        ${blood}
+      </div>
+
+      <div class="donor-meta">
+        <div class="donor-name">
+          <span class="realtime-dot"></span>🔒 ${masked}
+        </div>
+        <div class="donor-sub">
           📍 ${city}
-          ${d.isOrganDonor ? '<span class="badge badge-blue" style="margin-left:0.5rem;font-size:0.65rem;">Organ Donor</span>' : ''}
+          ${d.isOrganDonor ? '&nbsp;·&nbsp;<span class="badge badge-blue" style="font-size:0.62rem;padding:0.1rem 0.45rem;">Organ Donor</span>' : ''}
+        </div>
+        <div class="donor-sub" style="margin-top:0.1rem;">
+          <span class="badge badge-green" style="font-size:0.62rem;padding:0.1rem 0.45rem;">● Willing to Donate</span>
         </div>
       </div>
-      <div class="donor-actions">
-        <span class="badge badge-green">● Available</span>
+
+      <div style="display:flex;flex-direction:column;gap:0.4rem;align-items:flex-end;">
         <button class="btn btn-primary btn-sm"
-          onclick="requestFromDonor('${d.id}','${d.bloodType}','${name.split(' ')[0]}')">
-          Request
+          onclick="requestFromDonor('${d.id}','${blood}','${masked}')">
+          🩸 Request
+        </button>
+        <button class="btn btn-outline btn-sm"
+          onclick="openChatWithDonor('${d.id}','${masked}')">
+          💬 Chat
         </button>
       </div>
     </div>`;
   }).join('');
 }
 
+// ── Map ─────────────────────────────────────────────────────
 function initBloodMap() {
   const mapEl = document.getElementById('blood-map');
   if (!mapEl || mapEl._leaflet_id) return;
@@ -136,163 +197,147 @@ function plotBankMarkers(banks) {
   if (!bloodMap) return;
   clearMarkers();
   banks.forEach(bank => {
-    const totalUnits = Object.values(bank.inventory||{}).reduce((s,v)=>s+v,0);
-    const col = totalUnits > 20 ? '#12D98A' : totalUnits > 5 ? '#FFB830' : '#E8192C';
-    const icon = L.divIcon({
+    const total = Object.values(bank.inventory||{}).reduce((s,v)=>s+v,0);
+    const col   = total > 20 ? '#12D98A' : total > 5 ? '#FFB830' : '#E8192C';
+    const icon  = L.divIcon({
       html: `<div style="background:${col};color:#0A0E14;font-size:0.8rem;font-weight:700;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.4);box-shadow:0 4px 16px rgba(0,0,0,0.5);">🩸</div>`,
       iconSize:[38,38], iconAnchor:[19,19], className:'',
     });
     const invHtml = Object.entries(bank.inventory||{})
-      .map(([type,qty]) => `<span style="margin-right:4px;"><b>${type}</b>:${qty}</span>`)
-      .join('');
+      .map(([t,q]) => `<b>${t}</b>:${q}`).join(' · ');
     const m = L.marker([bank.lat, bank.lng], { icon })
-      .bindPopup(`
-        <b>🩸 ${bank.bankName}</b><br>
-        ${bank.address||''}<br>
-        📞 ${bank.phone||'—'}<br>
-        <small style="color:#8899AA;">Inventory:</small><br>
-        <div style="font-size:0.78rem;margin-top:4px;">${invHtml}</div>
-      `, { className: 'dark-popup' })
+      .bindPopup(`<b>🩸 ${bank.bankName}</b><br>${bank.address||''}<br>📞 ${bank.phone||'—'}<br><small>${invHtml}</small>`, { className:'dark-popup' })
       .addTo(bloodMap);
     mapMarkers.push(m);
   });
 }
 
-// ─── Render bank cards ─────────────────────
+// ── Bank list ───────────────────────────────────────────────
 function renderBankList(banks) {
   const list = document.getElementById('blood-bank-list');
   if (!list) return;
 
-  if (banks.length === 0) {
+  if (!banks.length) {
     list.innerHTML = `<div class="card" style="text-align:center;padding:2rem;">
-      <div style="font-size:2.5rem;margin-bottom:0.8rem;">🔍</div>
-      <p>No blood banks found for this type.<br>Try a different blood type.</p>
-    </div>`;
+      <div style="font-size:2.5rem;">🔍</div><p>No blood banks found.</p></div>`;
     return;
   }
 
   list.innerHTML = banks.map(bank => {
-    const inv = bank.inventory || {};
-    const totalUnits = Object.values(inv).reduce((s,v)=>s+v,0);
-    const availStatus = totalUnits > 20 ? 'badge-green' : totalUnits > 5 ? 'badge-amber' : 'badge-red';
-    const availLabel  = totalUnits > 20 ? '● High Stock' : totalUnits > 5 ? '● Low Stock' : '● Critical';
+    const inv   = bank.inventory || {};
+    const total = Object.values(inv).reduce((s,v)=>s+v,0);
+    const statusCls = total>20?'badge-green':total>5?'badge-amber':'badge-red';
+    const statusLbl = total>20?'● High Stock':total>5?'● Low Stock':'● Critical';
 
-    const invGrid = Object.entries(inv).map(([type, qty]) => {
-      const cls = qty > 10 ? 'available' : qty > 0 ? 'low' : 'empty';
-      return `
-        <div class="blood-unit-card ${cls}">
-          <div class="blood-unit-type">${type}</div>
-          <div class="blood-unit-count" style="color:${qty>10?'var(--green)':qty>0?'var(--amber)':'var(--slate)'};">${qty}</div>
-          <div class="blood-unit-label">units</div>
-        </div>`;
+    const invGrid = Object.entries(inv).map(([type,qty]) => {
+      const cls = qty>10?'available':qty>0?'low':'empty';
+      return `<div class="blood-unit-card ${cls}">
+        <div class="blood-unit-type">${type}</div>
+        <div class="blood-unit-count" style="color:${qty>10?'var(--green)':qty>0?'var(--amber)':'var(--slate)'};">${qty}</div>
+        <div class="blood-unit-label">units</div>
+      </div>`;
     }).join('');
 
     return `
-      <div class="card card-hover" style="margin-bottom:1rem;">
-        <div style="display:flex;align-items:flex-start;gap:1rem;margin-bottom:1rem;">
-          <div style="width:48px;height:48px;border-radius:12px;background:var(--red-glow);border:1.5px solid rgba(232,25,44,0.3);display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">🩸</div>
-          <div style="flex:1;">
-            <div style="font-weight:700;font-size:1rem;">${bank.bankName}</div>
-            <div style="font-size:0.8rem;color:var(--slate);margin-top:0.2rem;">📍 ${bank.address||bank.city||'—'}</div>
-            ${bank.phone ? `<div style="font-size:0.8rem;color:var(--slate);">📞 ${bank.phone}</div>` : ''}
-          </div>
-          <div>
-            <span class="badge ${availStatus}">${availLabel}</span>
-            <div style="font-size:0.72rem;color:var(--slate);margin-top:0.4rem;text-align:right;">${totalUnits} total units</div>
-          </div>
+    <div class="card card-hover" style="margin-bottom:1rem;">
+      <div style="display:flex;align-items:flex-start;gap:1rem;margin-bottom:0.9rem;">
+        <div style="width:46px;height:46px;border-radius:12px;background:var(--red-glow);border:1.5px solid rgba(232,25,44,0.3);
+                    display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">🩸</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;font-size:0.95rem;">${bank.bankName}</div>
+          <div style="font-size:0.78rem;color:var(--slate);margin-top:0.15rem;">📍 ${bank.address||bank.city||'—'}</div>
+          ${bank.phone?`<div style="font-size:0.78rem;color:var(--slate);">📞 ${bank.phone}</div>`:''}
         </div>
-        <div style="margin-bottom:0.8rem;">
-          <div style="font-size:0.75rem;color:var(--slate);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.5rem;">Blood Inventory</div>
-          <div class="blood-inventory-grid">${invGrid}</div>
+        <div style="text-align:right;">
+          <span class="badge ${statusCls}">${statusLbl}</span>
+          <div style="font-size:0.7rem;color:var(--slate);margin-top:0.3rem;">${total} units</div>
         </div>
-        <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
-          <button class="btn btn-outline btn-sm" onclick="focusBank(${bank.lat},${bank.lng})">📍 View on Map</button>
-          <button class="btn btn-primary btn-sm" onclick="requestBlood('${bank.id}','${bank.bankName}')">🩸 Request Blood</button>
-        </div>
-      </div>`;
+      </div>
+      <div class="blood-inventory-grid" style="margin-bottom:0.8rem;">${invGrid}</div>
+      <div style="display:flex;gap:0.5rem;justify-content:flex-end;">
+        <button class="btn btn-outline btn-sm" onclick="focusBank(${bank.lat},${bank.lng})">📍 Map</button>
+        <button class="btn btn-primary btn-sm" onclick="requestBlood('${bank.id}','${bank.bankName}')">🩸 Request</button>
+      </div>
+    </div>`;
   }).join('');
 }
 
-window.requestFromDonor = async function(donorId, bloodType, firstName) {
+// ── Actions ─────────────────────────────────────────────────
+window.focusBank = (lat, lng) => bloodMap.flyTo([lat,lng],16,{animate:true,duration:0.8});
+
+window.requestFromDonor = async function(donorId, bloodType, maskedName) {
   if (!currentUser) return;
+  const urgency = document.getElementById('blood-urgency').value || 'urgent';
   try {
-    await submitBloodRequest({
-      requesterId: currentUser.uid,
-      bloodType: bloodType,
-      urgency: document.getElementById('blood-urgency').value || 'urgent',
-      message: `Emergency ${bloodType} blood request`,
+    // Write to Firestore blood_requests
+    await addDoc(collection(db, 'blood_requests'), {
+      requesterId:   currentUser.uid,
+      requesterName: currentProfile?.name || 'Anonymous',
       targetDonorId: donorId,
-      lat: userCoords[0],
-      lng: userCoords[1],
+      bloodType,
+      urgency,
+      message:   `Emergency ${bloodType} blood needed`,
+      lat:       userCoords[0],
+      lng:       userCoords[1],
+      status:    'pending',
+      createdAt: serverTimestamp(),
     });
-    showToast(`Request sent to ${firstName}!`, 'success');
-    document.getElementById('notif-title').textContent = '🩸 Request Sent';
-    document.getElementById('notif-body').textContent =
-      `Your ${bloodType} blood request has been sent to ${firstName}. They will be notified immediately.`;
+
+    // Popup to the REQUESTER confirming send
+    document.getElementById('notif-title').textContent = '✅ Request Sent!';
+    document.getElementById('notif-body').textContent  =
+      `Your ${bloodType} blood request (${urgency.toUpperCase()}) has been sent to ${maskedName}.\n\nThey will receive an immediate notification. You can chat with them using the Chat button.`;
     document.getElementById('notif-overlay').classList.remove('hidden');
+    showToast(`Request sent to ${maskedName}!`, 'success');
   } catch(e) {
-    showToast('Failed to send request', 'error');
+    showToast('Failed to send request: ' + e.message, 'error');
   }
 };
 
-window.focusBank = function(lat, lng) {
-  bloodMap.flyTo([lat, lng], 16, { animate: true, duration: 0.8 });
+window.openChatWithDonor = function(donorId, name) {
+  // Build deterministic room ID from sorted UIDs
+  const roomId = [currentUser.uid, donorId].sort().join('_');
+  openChat(name, roomId);
 };
 
 window.requestBlood = async function(bankId, bankName) {
-  const bt = document.getElementById('blood-type-select').value;
+  const bt      = document.getElementById('blood-type-select').value;
   const urgency = document.getElementById('blood-urgency').value;
   if (!bt) { showToast('Please select a blood type first', 'error'); return; }
-
   try {
     await submitBloodRequest({
       requesterId: currentUser.uid,
-      bloodType: bt,
-      urgency,
-      bankId,
+      bloodType: bt, urgency, bankId,
       message: `Urgent ${bt} blood needed from ${bankName}`,
-      lat: userCoords[0],
-      lng: userCoords[1],
+      lat: userCoords[0], lng: userCoords[1],
     });
-    showToast(`Blood request sent to ${bankName}!`, 'success');
-    // Pop request notification
-    document.getElementById('notif-title').textContent = '🚨 Blood Request Sent';
-    document.getElementById('notif-body').textContent = `Your ${bt} blood request (${urgency}) has been submitted to ${bankName}. The bank will contact you shortly.`;
+    document.getElementById('notif-title').textContent = '🚨 Bank Request Sent!';
+    document.getElementById('notif-body').textContent  =
+      `Your ${bt} blood request (${urgency.toUpperCase()}) has been submitted to ${bankName}.\n\nThe blood bank staff will contact you shortly on your registered phone number.`;
     document.getElementById('notif-overlay').classList.remove('hidden');
-  } catch(e) {
-    showToast('Failed to submit request', 'error');
-  }
+  } catch(e) { showToast('Failed: ' + e.message, 'error'); }
 };
 
-// ─── Search ────────────────────────────────
 window.searchBlood = async function() {
-  const bt = document.getElementById('blood-type-select').value;
-  const searchBtn = document.getElementById('search-btn');
-  searchBtn.textContent = 'Searching…';
-  searchBtn.disabled = true;
-
+  const bt  = document.getElementById('blood-type-select').value;
+  const btn = document.getElementById('search-btn');
+  btn.textContent = 'Searching…'; btn.disabled = true;
   try {
-    let results;
-    if (bt) {
-      results = await getAvailableBloodByType(bt);
-    } else {
-      results = allBanks;
-    }
+    const results = bt ? await getAvailableBloodByType(bt) : allBanks;
     renderBankList(results);
     plotBankMarkers(results);
-    showToast(`Found ${results.length} bank(s) with ${bt||'blood'} available`, results.length > 0 ? 'success' : 'info');
-  } finally {
-    searchBtn.textContent = 'Search 🔍';
-    searchBtn.disabled = false;
-  }
+    showToast(`Found ${results.length} bank(s)`, results.length>0?'success':'info');
+  } finally { btn.textContent = 'Search 🔍'; btn.disabled = false; }
 };
 </script>
 
+<!-- ══ PAGE LAYOUT ══════════════════════════════════════════ -->
 <div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+
   <div class="dash-header">
     <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
     <h1>🩸 Blood Locator</h1>
-    <p>View blood bank inventory and submit emergency requests · Real-time from Firebase</p>
+    <p>Real-time blood bank inventory &amp; registered donors · Devanahalli &amp; Doddaballapur</p>
   </div>
 
   <!-- Search Controls -->
@@ -302,10 +347,8 @@ window.searchBlood = async function() {
         <label>Required Blood Type</label>
         <select class="form-control" id="blood-type-select">
           <option value="">All Blood Types</option>
-          <option>A+</option><option>A-</option>
-          <option>B+</option><option>B-</option>
-          <option>AB+</option><option>AB-</option>
-          <option>O+</option><option>O-</option>
+          <option>A+</option><option>A-</option><option>B+</option><option>B-</option>
+          <option>AB+</option><option>AB-</option><option>O+</option><option>O-</option>
         </select>
       </div>
       <div class="form-group">
@@ -320,8 +363,8 @@ window.searchBlood = async function() {
     </div>
   </div>
 
-  <!-- Map + Results Layout -->
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;align-items:start;">
+  <!-- Map + Blood Banks -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;align-items:start;margin-bottom:2rem;">
     <!-- Map -->
     <div>
       <div class="map-container">
@@ -335,39 +378,41 @@ window.searchBlood = async function() {
             <div class="status-dot online"></div> Live
           </div>
         </div>
-        <div id="blood-map" style="width:100%;height:420px;"></div>
+        <div id="blood-map" style="width:100%;height:400px;"></div>
       </div>
-      <div class="card" style="margin-top:0.8rem;padding:0.9rem 1rem;">
-        <div style="font-size:0.75rem;color:var(--slate);margin-bottom:0.3rem;">Your Location</div>
-        <div class="user-location-display font-mono" style="font-size:0.8rem;"></div>
+      <div class="card" style="margin-top:0.8rem;padding:0.8rem 1rem;">
+        <div style="font-size:0.72rem;color:var(--slate);margin-bottom:0.2rem;">Your Location</div>
+        <div class="user-location-display font-mono" style="font-size:0.78rem;"></div>
       </div>
     </div>
 
-    <!-- Bank Results -->
+    <!-- Blood Banks -->
     <div>
       <div class="section-header">
         <div class="section-title-group">
           <h3>Blood Banks</h3>
-          <small>Real-time inventory from Firebase · Click to request</small>
+          <small>Live inventory from Firebase</small>
         </div>
       </div>
-      <div id="blood-bank-list">
-        <div class="spinner"></div>
-      </div>
+      <div id="blood-bank-list"><div class="spinner"></div></div>
     </div>
   </div>
 
-  <!-- Registered Donor Members Section -->
-  <div style="margin-top:2rem;">
-    <div class="section-header">
-      <div class="section-title-group">
-        <h3>🩸 Registered Blood Donors</h3>
-        <small>Real members from Devanahalli &amp; Doddaballapur · Names partially masked for privacy</small>
-      </div>
+  <!-- ══ REGISTERED DONORS ══════════════════════════════════ -->
+  <div class="section-header">
+    <div class="section-title-group">
+      <h3>🩸 Registered Blood Donors
+        <span id="donor-count" style="font-size:0.85rem;font-weight:400;color:var(--slate);margin-left:0.5rem;"></span>
+      </h3>
+      <small>
+        <span class="realtime-dot"></span>
+        Real-time · Devanahalli &amp; Doddaballapur · Blood group shown · Names privacy-masked
+      </small>
     </div>
-    <div id="donor-member-list" class="donor-result-list">
-      <div class="spinner"></div>
-    </div>
+  </div>
+
+  <div id="donor-member-list">
+    <div class="spinner"></div>
   </div>
 
 </div>
