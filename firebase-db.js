@@ -32,13 +32,14 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── Firebase Config ──────────────────────────
-const firebaseConfig = {
+ const firebaseConfig = {
     apiKey: "AIzaSyCh--A5NzZ78ncc6MqZdIhUQe2HG1EW1aU",
     authDomain: "door-a3702.firebaseapp.com",
+    databaseURL: "https://door-a3702-default-rtdb.firebaseio.com",
     projectId: "door-a3702",
     storageBucket: "door-a3702.firebasestorage.app",
     messagingSenderId: "176601799543",
-    appId: "1:176601799543:web:3dba805a6a711202955f72"
+    appId: "1:176601799543:web:6457512910305a51955f72"
   };
 
 
