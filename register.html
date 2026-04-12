@@ -129,7 +129,13 @@
     err.style.display = 'none';
 
     try {
-      await registerUser(email, pass, { name, phone, bloodType: selectedBlood, willDonate });
+      await registerUser(email, pass, {
+        name,
+        phone,
+        bloodType:  selectedBlood,          // e.g. "O+" stored as string
+        willDonate: willDonate === true,     // always boolean
+        city:       'Bengaluru',             // default city
+      });
       showToast('Account created! Welcome to DoOr.', 'success');
       setTimeout(() => window.location.href = 'dashboard.html', 1000);
     } catch (e) {
