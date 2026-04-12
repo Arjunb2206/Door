@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Sign In</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="bg-dots">
+
+<div class="toast-container" id="toast-container"></div>
+
+<!-- LOGIN PAGE -->
+<div class="auth-wrapper">
+  <div class="auth-left">
+    <div class="auth-left-content">
+      <div class="auth-brand">Do<span>Or</span></div>
+      <div class="auth-tagline">Donor &amp; Organ Resource Platform</div>
+    </div>
+    <div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">🩸</div>
+        <div><h4>Instant Blood Matching</h4><p>Find matching donors within 3km in seconds</p></div>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">🫀</div>
+        <div><h4>Organ Coordination</h4><p>Hospital-to-hospital organ requests</p></div>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">🔒</div>
+        <div><h4>Privacy-First</h4><p>Anonymous until you choose to reveal identity</p></div>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">📍</div>
+        <div><h4>Real-time Location</h4><p>Live GPS tracking restricted to 3km radius</p></div>
+      </div>
+    </div>
+    <div style="color:rgba(255,255,255,0.4);font-size:0.75rem;">© 2025 DoOr Emergency Platform</div>
+  </div>
+
+  <div class="auth-right">
+    <div class="auth-form-container">
+      <h2 class="auth-title">Welcome back</h2>
+      <p class="auth-subtitle">Sign in to access the emergency platform</p>
+
+      <div class="auth-form">
+        <div class="form-group">
+          <label>Email Address</label>
+          <input class="form-control" id="login-email" type="email" placeholder="you@example.com" />
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input class="form-control" id="login-pass" type="password" placeholder="••••••••" />
+        </div>
+        <button class="btn btn-primary btn-lg btn-full" id="login-btn">Sign In →</button>
+        <div id="login-error" style="color:var(--red);font-size:0.84rem;text-align:center;display:none;"></div>
+      </div>
+
+      <div class="auth-switch">Don't have an account? <a href="register.html">Create one →</a></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { loginUser, onAuthChange } from './firebase-db.js';
+
+  // Redirect if already logged in
+  onAuthChange(user => {
+    if (user) window.location.href = 'dashboard.html';
+  });
+
+  const showToast = (msg, type) => {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.innerHTML = `<span>${type==='error'?'❌':'✅'}</span><span>${msg}</span>`;
+    c.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  };
+
+  document.getElementById('login-btn').addEventListener('click', async () => {
+    const btn   = document.getElementById('login-btn');
+    const email = document.getElementById('login-email').value.trim();
+    const pass  = document.getElementById('login-pass').value;
+    const err   = document.getElementById('login-error');
+
+    if (!email || !pass) { showToast('Please fill in all fields', 'error'); return; }
+
+    btn.textContent = 'Signing in…';
+    btn.disabled = true;
+    err.style.display = 'none';
+
+    try {
+      await loginUser(email, pass);
+      window.location.href = 'dashboard.html';
+    } catch (e) {
+      err.textContent = 'Invalid email or password. Please try again.';
+      err.style.display = 'block';
+      showToast('Login failed', 'error');
+    } finally {
+      btn.textContent = 'Sign In →';
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('login-pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('login-btn').click();
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Blood Locator</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+</head>
+<body class="bg-dots" data-page="blood">
+
+<script type="module">
+import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
+         getBloodBankInventory, getAvailableBloodByType,
+         submitBloodRequest } from './firebase-db.js';
+import { injectShell, updateLocationDisplay, initMap } from './shell.js';
+
+injectShell();
+
+let currentUser = null;
+let currentProfile = null;
+let userCoords = [12.9716, 77.5946];
+let bloodMap = null;
+let allBanks = [];
+let mapMarkers = [];
+
+onAuthChange(async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  currentProfile = await getUserProfile(user.uid);
+  if (currentProfile) {
+    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = currentProfile.name);
+    document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = currentProfile.name[0].toUpperCase());
+  }
+  startGeolocation();
+});
+
+document.getElementById('sign-out-btn').addEventListener('click', async () => {
+  await logoutUser(); window.location.href = 'login.html';
+});
+
+function startGeolocation() {
+  const fallback = () => {
+    updateLocationDisplay(userCoords);
+    loadBloodData();
+  };
+  if (!navigator.geolocation) { fallback(); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userCoords = [pos.coords.latitude, pos.coords.longitude];
+    updateLocationDisplay(userCoords);
+    if (currentUser) updateUserLocation(currentUser.uid, userCoords[0], userCoords[1]);
+    loadBloodData();
+  }, fallback);
+}
+
+// Simulate incoming blood request notification for donors
+setTimeout(() => {
+  if (currentProfile && currentProfile.willDonate) {
+    document.getElementById('notif-title').textContent = '🩸 Blood Request Incoming';
+    document.getElementById('notif-body').textContent =
+      `A patient 0.8km away needs ${currentProfile.bloodType} blood urgently. You are a matching donor. Please respond.`;
+    document.getElementById('notif-overlay').classList.remove('hidden');
+  }
+}, 15000);
+
+async function loadBloodData() {
+  allBanks = await getBloodBankInventory();
+  initBloodMap();
+  renderBankList(allBanks);
+}
+
+function initBloodMap() {
+  const mapEl = document.getElementById('blood-map');
+  if (!mapEl || mapEl._leaflet_id) return;
+  bloodMap = initMap('blood-map', userCoords);
+  plotBankMarkers(allBanks);
+}
+
+function clearMarkers() {
+  mapMarkers.forEach(m => bloodMap.removeLayer(m));
+  mapMarkers = [];
+}
+
+function plotBankMarkers(banks) {
+  if (!bloodMap) return;
+  clearMarkers();
+  banks.forEach(bank => {
+    const totalUnits = Object.values(bank.inventory||{}).reduce((s,v)=>s+v,0);
+    const col = totalUnits > 20 ? '#12D98A' : totalUnits > 5 ? '#FFB830' : '#E8192C';
+    const icon = L.divIcon({
+      html: `<div style="background:${col};color:#0A0E14;font-size:0.8rem;font-weight:700;width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.4);box-shadow:0 4px 16px rgba(0,0,0,0.5);">🩸</div>`,
+      iconSize:[38,38], iconAnchor:[19,19], className:'',
+    });
+    const invHtml = Object.entries(bank.inventory||{})
+      .map(([type,qty]) => `<span style="margin-right:4px;"><b>${type}</b>:${qty}</span>`)
+      .join('');
+    const m = L.marker([bank.lat, bank.lng], { icon })
+      .bindPopup(`
+        <b>🩸 ${bank.bankName}</b><br>
+        ${bank.address||''}<br>
+        📞 ${bank.phone||'—'}<br>
+        <small style="color:#8899AA;">Inventory:</small><br>
+        <div style="font-size:0.78rem;margin-top:4px;">${invHtml}</div>
+      `, { className: 'dark-popup' })
+      .addTo(bloodMap);
+    mapMarkers.push(m);
+  });
+}
+
+// ─── Render bank cards ─────────────────────
+function renderBankList(banks) {
+  const list = document.getElementById('blood-bank-list');
+  if (!list) return;
+
+  if (banks.length === 0) {
+    list.innerHTML = `<div class="card" style="text-align:center;padding:2rem;">
+      <div style="font-size:2.5rem;margin-bottom:0.8rem;">🔍</div>
+      <p>No blood banks found for this type.<br>Try a different blood type.</p>
+    </div>`;
+    return;
+  }
+
+  list.innerHTML = banks.map(bank => {
+    const inv = bank.inventory || {};
+    const totalUnits = Object.values(inv).reduce((s,v)=>s+v,0);
+    const availStatus = totalUnits > 20 ? 'badge-green' : totalUnits > 5 ? 'badge-amber' : 'badge-red';
+    const availLabel  = totalUnits > 20 ? '● High Stock' : totalUnits > 5 ? '● Low Stock' : '● Critical';
+
+    const invGrid = Object.entries(inv).map(([type, qty]) => {
+      const cls = qty > 10 ? 'available' : qty > 0 ? 'low' : 'empty';
+      return `
+        <div class="blood-unit-card ${cls}">
+          <div class="blood-unit-type">${type}</div>
+          <div class="blood-unit-count" style="color:${qty>10?'var(--green)':qty>0?'var(--amber)':'var(--slate)'};">${qty}</div>
+          <div class="blood-unit-label">units</div>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="card card-hover" style="margin-bottom:1rem;">
+        <div style="display:flex;align-items:flex-start;gap:1rem;margin-bottom:1rem;">
+          <div style="width:48px;height:48px;border-radius:12px;background:var(--red-glow);border:1.5px solid rgba(232,25,44,0.3);display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">🩸</div>
+          <div style="flex:1;">
+            <div style="font-weight:700;font-size:1rem;">${bank.bankName}</div>
+            <div style="font-size:0.8rem;color:var(--slate);margin-top:0.2rem;">📍 ${bank.address||bank.city||'—'}</div>
+            ${bank.phone ? `<div style="font-size:0.8rem;color:var(--slate);">📞 ${bank.phone}</div>` : ''}
+          </div>
+          <div>
+            <span class="badge ${availStatus}">${availLabel}</span>
+            <div style="font-size:0.72rem;color:var(--slate);margin-top:0.4rem;text-align:right;">${totalUnits} total units</div>
+          </div>
+        </div>
+        <div style="margin-bottom:0.8rem;">
+          <div style="font-size:0.75rem;color:var(--slate);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.5rem;">Blood Inventory</div>
+          <div class="blood-inventory-grid">${invGrid}</div>
+        </div>
+        <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
+          <button class="btn btn-outline btn-sm" onclick="focusBank(${bank.lat},${bank.lng})">📍 View on Map</button>
+          <button class="btn btn-primary btn-sm" onclick="requestBlood('${bank.id}','${bank.bankName}')">🩸 Request Blood</button>
+        </div>
+      </div>`;
+  }).join('');
+}
+
+window.focusBank = function(lat, lng) {
+  bloodMap.flyTo([lat, lng], 16, { animate: true, duration: 0.8 });
+};
+
+window.requestBlood = async function(bankId, bankName) {
+  const bt = document.getElementById('blood-type-select').value;
+  const urgency = document.getElementById('blood-urgency').value;
+  if (!bt) { showToast('Please select a blood type first', 'error'); return; }
+
+  try {
+    await submitBloodRequest({
+      requesterId: currentUser.uid,
+      bloodType: bt,
+      urgency,
+      bankId,
+      message: `Urgent ${bt} blood needed from ${bankName}`,
+      lat: userCoords[0],
+      lng: userCoords[1],
+    });
+    showToast(`Blood request sent to ${bankName}!`, 'success');
+    // Pop request notification
+    document.getElementById('notif-title').textContent = '🚨 Blood Request Sent';
+    document.getElementById('notif-body').textContent = `Your ${bt} blood request (${urgency}) has been submitted to ${bankName}. The bank will contact you shortly.`;
+    document.getElementById('notif-overlay').classList.remove('hidden');
+  } catch(e) {
+    showToast('Failed to submit request', 'error');
+  }
+};
+
+// ─── Search ────────────────────────────────
+window.searchBlood = async function() {
+  const bt = document.getElementById('blood-type-select').value;
+  const searchBtn = document.getElementById('search-btn');
+  searchBtn.textContent = 'Searching…';
+  searchBtn.disabled = true;
+
+  try {
+    let results;
+    if (bt) {
+      results = await getAvailableBloodByType(bt);
+    } else {
+      results = allBanks;
+    }
+    renderBankList(results);
+    plotBankMarkers(results);
+    showToast(`Found ${results.length} bank(s) with ${bt||'blood'} available`, results.length > 0 ? 'success' : 'info');
+  } finally {
+    searchBtn.textContent = 'Search 🔍';
+    searchBtn.disabled = false;
+  }
+};
+</script>
+
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+  <div class="dash-header">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
+    <h1>🩸 Blood Locator</h1>
+    <p>View blood bank inventory and submit emergency requests · Real-time from Firebase</p>
+  </div>
+
+  <!-- Search Controls -->
+  <div class="card" style="margin-bottom:1.2rem;">
+    <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:1rem;align-items:end;">
+      <div class="form-group">
+        <label>Required Blood Type</label>
+        <select class="form-control" id="blood-type-select">
+          <option value="">All Blood Types</option>
+          <option>A+</option><option>A-</option>
+          <option>B+</option><option>B-</option>
+          <option>AB+</option><option>AB-</option>
+          <option>O+</option><option>O-</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Urgency Level</label>
+        <select class="form-control" id="blood-urgency">
+          <option value="critical">🔴 Critical</option>
+          <option value="urgent">🟡 Urgent</option>
+          <option value="normal">🟢 Normal</option>
+        </select>
+      </div>
+      <button class="btn btn-primary btn-lg" id="search-btn" onclick="searchBlood()">Search 🔍</button>
+    </div>
+  </div>
+
+  <!-- Map + Results Layout -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;align-items:start;">
+    <!-- Map -->
+    <div>
+      <div class="map-container">
+        <div class="map-toolbar">
+          <div class="map-legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>High Stock</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Low Stock</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Critical</div>
+          </div>
+          <div style="font-size:0.72rem;color:var(--green);display:flex;align-items:center;gap:0.4rem;">
+            <div class="status-dot online"></div> Live
+          </div>
+        </div>
+        <div id="blood-map" style="width:100%;height:420px;"></div>
+      </div>
+      <div class="card" style="margin-top:0.8rem;padding:0.9rem 1rem;">
+        <div style="font-size:0.75rem;color:var(--slate);margin-bottom:0.3rem;">Your Location</div>
+        <div class="user-location-display font-mono" style="font-size:0.8rem;"></div>
+      </div>
+    </div>
+
+    <!-- Bank Results -->
+    <div>
+      <div class="section-header">
+        <div class="section-title-group">
+          <h3>Blood Banks</h3>
+          <small>Real-time inventory from Firebase · Click to request</small>
+        </div>
+      </div>
+      <div id="blood-bank-list">
+        <div class="spinner"></div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

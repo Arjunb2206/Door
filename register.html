@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Create Account</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="bg-dots">
+
+<div class="toast-container" id="toast-container"></div>
+
+<div class="auth-wrapper">
+  <div class="auth-left">
+    <div class="auth-left-content">
+      <div class="auth-brand">Do<span>Or</span></div>
+      <div class="auth-tagline">Join the emergency network</div>
+    </div>
+    <div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">❤️</div>
+        <div><h4>Save Lives</h4><p>Your registration could save someone today</p></div>
+      </div>
+      <div class="auth-feature">
+        <div class="auth-feature-icon">🌐</div>
+        <div><h4>3km Network</h4><p>Connected with nearby helpers &amp; facilities</p></div>
+      </div>
+    </div>
+    <div style="color:rgba(255,255,255,0.4);font-size:0.75rem;">© 2025 DoOr Emergency Platform</div>
+  </div>
+
+  <div class="auth-right">
+    <div class="auth-form-container">
+      <h2 class="auth-title">Create account</h2>
+      <p class="auth-subtitle">Join the DoOr emergency network</p>
+
+      <div class="auth-form">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Full Name *</label>
+            <input class="form-control" id="reg-name" type="text" placeholder="Alex Morgan" />
+          </div>
+          <div class="form-group">
+            <label>Phone Number</label>
+            <input class="form-control" id="reg-phone" type="tel" placeholder="+91 9876543210" />
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Email Address *</label>
+          <input class="form-control" id="reg-email" type="email" placeholder="you@example.com" />
+        </div>
+        <div class="form-group">
+          <label>Password *</label>
+          <input class="form-control" id="reg-pass" type="password" placeholder="Min 8 characters" />
+        </div>
+        <div class="form-group">
+          <label>Blood Type * <span style="color:var(--red);">(Required)</span></label>
+          <div class="blood-type-grid" id="blood-type-grid">
+            <div class="blood-chip" data-type="A+">A+</div>
+            <div class="blood-chip" data-type="A-">A-</div>
+            <div class="blood-chip" data-type="B+">B+</div>
+            <div class="blood-chip" data-type="B-">B-</div>
+            <div class="blood-chip" data-type="AB+">AB+</div>
+            <div class="blood-chip" data-type="AB-">AB-</div>
+            <div class="blood-chip" data-type="O+">O+</div>
+            <div class="blood-chip" data-type="O-">O-</div>
+          </div>
+        </div>
+        <div class="form-group">
+          <div style="display:flex;align-items:center;justify-content:space-between;background:var(--dark-3);padding:0.75rem 1rem;border-radius:8px;border:1px solid var(--dark-4);">
+            <div>
+              <div style="font-size:0.88rem;font-weight:500;color:var(--white);">Willing to Donate</div>
+              <div style="font-size:0.75rem;color:var(--slate);">Appear in donor search results</div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked id="reg-donate" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+        </div>
+        <button class="btn btn-primary btn-lg btn-full" id="register-btn">Create Account →</button>
+        <div id="reg-error" style="color:var(--red);font-size:0.84rem;text-align:center;display:none;"></div>
+      </div>
+
+      <div class="auth-switch">Already have an account? <a href="login.html">Sign in →</a></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  import { registerUser, onAuthChange } from './firebase-db.js';
+
+  onAuthChange(user => {
+    if (user) window.location.href = 'dashboard.html';
+  });
+
+  const showToast = (msg, type) => {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div');
+    t.className = `toast ${type}`;
+    t.innerHTML = `<span>${type==='error'?'❌':'✅'}</span><span>${msg}</span>`;
+    c.appendChild(t); setTimeout(() => t.remove(), 3500);
+  };
+
+  let selectedBlood = '';
+  document.querySelectorAll('.blood-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.blood-chip').forEach(c => c.classList.remove('selected'));
+      chip.classList.add('selected');
+      selectedBlood = chip.dataset.type;
+    });
+  });
+
+  document.getElementById('register-btn').addEventListener('click', async () => {
+    const btn   = document.getElementById('register-btn');
+    const name  = document.getElementById('reg-name').value.trim();
+    const email = document.getElementById('reg-email').value.trim();
+    const pass  = document.getElementById('reg-pass').value;
+    const phone = document.getElementById('reg-phone').value.trim();
+    const willDonate = document.getElementById('reg-donate').checked;
+    const err   = document.getElementById('reg-error');
+
+    if (!name || !email || !pass) { showToast('Please fill all required fields', 'error'); return; }
+    if (!selectedBlood) { showToast('Please select your blood type', 'error'); return; }
+    if (pass.length < 8) { showToast('Password must be at least 8 characters', 'error'); return; }
+
+    btn.textContent = 'Creating account…';
+    btn.disabled = true;
+    err.style.display = 'none';
+
+    try {
+      await registerUser(email, pass, { name, phone, bloodType: selectedBlood, willDonate });
+      showToast('Account created! Welcome to DoOr.', 'success');
+      setTimeout(() => window.location.href = 'dashboard.html', 1000);
+    } catch (e) {
+      err.textContent = e.message || 'Registration failed. Please try again.';
+      err.style.display = 'block';
+      showToast('Registration failed', 'error');
+    } finally {
+      btn.textContent = 'Create Account →';
+      btn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>

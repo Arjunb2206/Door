@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Professional Services</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+</head>
+<body class="bg-dots" data-page="professional">
+
+<script type="module">
+import { onAuthChange, getUserProfile, logoutUser, updateUserLocation } from './firebase-db.js';
+import { injectShell, updateLocationDisplay, initMap } from './shell.js';
+
+injectShell();
+
+let currentUser = null;
+let userCoords = [12.9716, 77.5946];
+let proMap = null;
+
+const DOCTORS = [
+  { id:'Dr1', name:'Dr. S. Sharma', specialty:'Cardiologist', lat:12.978, lng:77.598, available:true, rating:'4.8', distance:'0.9' },
+  { id:'Dr2', name:'Dr. R. Patel', specialty:'Neurologist', lat:12.965, lng:77.589, available:false, rating:'4.6', distance:'1.4' },
+  { id:'Dr3', name:'Dr. M. Reddy', specialty:'Orthopedic', lat:12.981, lng:77.582, available:true, rating:'4.9', distance:'2.1' },
+  { id:'Dr4', name:'Dr. A. Kumar', specialty:'Pediatrician', lat:12.968, lng:77.603, available:true, rating:'4.7', distance:'1.8' },
+  { id:'Dr5', name:'Dr. P. Nair', specialty:'Oncologist', lat:12.975, lng:77.591, available:false, rating:'4.5', distance:'2.6' },
+];
+const PHARMACIES = [
+  { id:'Ph1', name:'MedPlus Pharmacy', lat:12.972, lng:77.597, open24:true, rating:'4.4', distance:'0.6', phone:'+91 80 2234 5678' },
+  { id:'Ph2', name:'Apollo Pharmacy', lat:12.969, lng:77.585, open24:false, rating:'4.6', distance:'1.3', phone:'+91 80 2345 6789' },
+  { id:'Ph3', name:'Wellness Forever', lat:12.979, lng:77.601, open24:true, rating:'4.2', distance:'2.0', phone:'+91 80 2456 7890' },
+];
+
+onAuthChange(async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  const profile = await getUserProfile(user.uid);
+  if (profile) {
+    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = profile.name);
+    document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = profile.name[0].toUpperCase());
+  }
+  startGeo();
+});
+
+document.getElementById('sign-out-btn').addEventListener('click', async () => {
+  await logoutUser(); window.location.href = 'login.html';
+});
+
+function startGeo() {
+  const fallback = () => { updateLocationDisplay(userCoords); initProMap(); renderDoctors(DOCTORS); renderPharmacies(PHARMACIES); };
+  if (!navigator.geolocation) { fallback(); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userCoords = [pos.coords.latitude, pos.coords.longitude];
+    updateLocationDisplay(userCoords);
+    initProMap(); renderDoctors(DOCTORS); renderPharmacies(PHARMACIES);
+  }, fallback);
+}
+
+function initProMap() {
+  const mapEl = document.getElementById('pro-map');
+  if (!mapEl || mapEl._leaflet_id) return;
+  proMap = initMap('pro-map', userCoords);
+  DOCTORS.forEach(d => {
+    const icon = L.divIcon({
+      html:`<div style="background:#FFB830;color:#0A0E14;font-size:1rem;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.5);">👨‍⚕️</div>`,
+      iconSize:[36,36], iconAnchor:[18,18], className:'',
+    });
+    L.marker([d.lat,d.lng],{icon}).bindPopup(`<b>👨‍⚕️ ${d.name}</b><br>${d.specialty}<br>⭐ ${d.rating}`,{className:'dark-popup'}).addTo(proMap);
+  });
+  PHARMACIES.forEach(p => {
+    const icon = L.divIcon({
+      html:`<div style="background:#12D98A;color:#0A0E14;font-size:1rem;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.5);">💊</div>`,
+      iconSize:[36,36], iconAnchor:[18,18], className:'',
+    });
+    L.marker([p.lat,p.lng],{icon}).bindPopup(`<b>💊 ${p.name}</b><br>${p.open24?'🌙 24/7':'Regular hours'}<br>⭐ ${p.rating}`,{className:'dark-popup'}).addTo(proMap);
+  });
+}
+
+function renderDoctors(docs) {
+  const list = document.getElementById('doctor-list');
+  list.innerHTML = docs.map(d => `
+    <div class="donor-card card-hover">
+      <div class="donor-blood-badge" style="background:rgba(255,184,48,0.12);border-color:rgba(255,184,48,0.3);color:var(--amber);font-size:1.1rem;">👨‍⚕️</div>
+      <div class="donor-info">
+        <div class="donor-name-masked">${d.name}</div>
+        <div class="donor-id">${d.specialty}</div>
+        <div class="donor-distance">📍 ${d.distance} km · ⭐ ${d.rating} · <span class="${d.available?'text-green':'text-amber'}">${d.available?'Available':'Busy'}</span></div>
+      </div>
+      <div class="donor-actions">
+        <button class="btn btn-outline btn-sm" onclick="openChat('${d.name}')">💬 Chat</button>
+        <button class="btn btn-primary btn-sm" onclick="showToast('📞 Connecting to ${d.name}…','info')">📞</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderPharmacies(pharmacies) {
+  const list = document.getElementById('pharmacy-list');
+  list.innerHTML = pharmacies.map(p => `
+    <div class="donor-card card-hover">
+      <div class="donor-blood-badge" style="background:rgba(18,217,138,0.12);border-color:rgba(18,217,138,0.3);color:var(--green);font-size:1.1rem;">💊</div>
+      <div class="donor-info">
+        <div class="donor-name-masked">${p.name}</div>
+        <div class="donor-distance">📍 ${p.distance} km · ⭐ ${p.rating}</div>
+        <div style="margin-top:0.3rem;">${p.open24?'<span class="badge badge-green">🌙 24/7 Open</span>':'<span class="badge badge-blue">Regular Hours</span>'}</div>
+      </div>
+      <button class="btn btn-accent btn-sm" onclick="window.open('tel:${p.phone}')">📞 Call</button>
+    </div>
+  `).join('');
+}
+
+window.filterDoctors = function(specialty, el) {
+  document.querySelectorAll('.specialty-chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  const filtered = specialty === 'all' ? DOCTORS : DOCTORS.filter(d => d.specialty === specialty);
+  renderDoctors(filtered);
+};
+
+window.switchTab = function(group, tab) {
+  document.querySelectorAll(`[data-tab-group="${group}"]`).forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+  document.querySelectorAll(`[data-tab-pane-group="${group}"]`).forEach(p => p.classList.toggle('active', p.dataset.tabPane===tab));
+};
+</script>
+
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+  <div class="dash-header">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
+    <h1>👨‍⚕️ Professional Services</h1>
+    <p>Specialist doctors and pharmacies within 3km</p>
+  </div>
+
+  <div class="map-container" style="margin-bottom:1.5rem;">
+    <div class="map-toolbar">
+      <div class="map-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Doctors</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>Pharmacies</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--green);display:flex;align-items:center;gap:0.4rem;">
+        <div class="status-dot online"></div> Live
+      </div>
+    </div>
+    <div id="pro-map" style="width:100%;height:340px;"></div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab-group="pro" data-tab="doctors" onclick="switchTab('pro','doctors')">👨‍⚕️ Specialist Doctors</button>
+    <button class="tab-btn" data-tab-group="pro" data-tab="pharmacies" onclick="switchTab('pro','pharmacies')">💊 Pharmacies</button>
+  </div>
+
+  <div data-tab-pane-group="pro" data-tab-pane="doctors" class="tab-pane active">
+    <div class="specialty-grid" style="margin-bottom:1rem;">
+      <div class="specialty-chip active" onclick="filterDoctors('all',this)">All</div>
+      <div class="specialty-chip" onclick="filterDoctors('Cardiologist',this)">Cardiologist</div>
+      <div class="specialty-chip" onclick="filterDoctors('Neurologist',this)">Neurologist</div>
+      <div class="specialty-chip" onclick="filterDoctors('Orthopedic',this)">Orthopedic</div>
+      <div class="specialty-chip" onclick="filterDoctors('Pediatrician',this)">Pediatrician</div>
+      <div class="specialty-chip" onclick="filterDoctors('Oncologist',this)">Oncologist</div>
+    </div>
+    <div id="doctor-list" class="donor-result-list"><div class="spinner"></div></div>
+  </div>
+
+  <div data-tab-pane-group="pro" data-tab-pane="pharmacies" class="tab-pane">
+    <div id="pharmacy-list" class="donor-result-list"><div class="spinner"></div></div>
+  </div>
+</div>
+</body>
+</html>
