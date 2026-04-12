@@ -32,14 +32,13 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── Firebase Config ──────────────────────────
- const firebaseConfig = {
-    apiKey: "AIzaSyD9FutY0xnK5c9FkHT2td6I38xllpazmW8",
-    authDomain: "door-5e485.firebaseapp.com",
-    projectId: "door-5e485",
-    storageBucket: "door-5e485.firebasestorage.app",
-    messagingSenderId: "488274016045",
-    appId: "1:488274016045:web:f208b66eeab6c3129585a4",
-    measurementId: "G-WB015WMGVP"
+const firebaseConfig = {
+    apiKey: "AIzaSyCh--A5NzZ78ncc6MqZdIhUQe2HG1EW1aU",
+    authDomain: "door-a3702.firebaseapp.com",
+    projectId: "door-a3702",
+    storageBucket: "door-a3702.firebasestorage.app",
+    messagingSenderId: "176601799543",
+    appId: "1:176601799543:web:3dba805a6a711202955f72"
   };
 
 
