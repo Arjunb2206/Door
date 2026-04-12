@@ -17,6 +17,15 @@ import { doc, setDoc, serverTimestamp }
 
 injectShell();
 
+// ── Blood chip click handler in profile ────
+document.addEventListener('click', e => {
+  const chip = e.target.closest('#prof-blood-grid .blood-chip');
+  if (chip) {
+    document.querySelectorAll('#prof-blood-grid .blood-chip').forEach(c => c.classList.remove('selected'));
+    chip.classList.add('selected');
+  }
+});
+
 let currentUser  = null;
 let currentProfile = null;
 
@@ -46,7 +55,11 @@ function populateUI(p, user) {
   document.getElementById('prof-name').value  = name  !== 'User' ? name : '';
   document.getElementById('prof-email').value = email;
   document.getElementById('prof-phone').value = phone;
-  document.getElementById('prof-blood').textContent = blood;
+
+  // Select the matching blood chip
+  document.querySelectorAll('#prof-blood-grid .blood-chip').forEach(chip => {
+    chip.classList.toggle('selected', chip.dataset.type === blood);
+  });
 
   // Medical fields
   document.getElementById('prof-allergies').value   = p?.allergies   || '';
@@ -69,21 +82,25 @@ function populateUI(p, user) {
 onAuthChange(async user => {
   if (!user) { window.location.href = 'login.html'; return; }
   currentUser = user;
+  window._currentUid = user.uid; // for chat bubble direction
 
   // Try Firestore first; fall back to auth user data
   currentProfile = await getUserProfile(user.uid);
 
   // If no Firestore doc yet, create a skeleton one from auth data
   if (!currentProfile) {
+    // User exists in Auth but has no Firestore doc yet —
+    // create a skeleton WITHOUT a blood type so they are prompted to fill it in
     const skeleton = {
       uid:                    user.uid,
       name:                   user.displayName || 'User',
       email:                  user.email || '',
       phone:                  '',
-      bloodType:              '—',
-      willDonate:             true,
+      bloodType:              '',          // empty → user must fill this in profile
+      willDonate:             true,        // boolean
       isOrganDonor:           false,
       emergencyNotifications: true,
+      city:                   'Bengaluru',
       location:               null,
       createdAt:              serverTimestamp(),
       updatedAt:              serverTimestamp(),
@@ -112,15 +129,20 @@ window.saveProfile = async function() {
   saveBtn.disabled = true;
 
   try {
+    // Get selected blood type from grid
+    const selectedChip = document.querySelector('#prof-blood-grid .blood-chip.selected');
+    const newBloodType = selectedChip?.dataset.type || currentProfile?.bloodType || '';
+
     const updates = {
       name:                   document.getElementById('prof-name').value.trim() || currentProfile?.name || '',
       phone:                  document.getElementById('prof-phone').value.trim(),
+      bloodType:              newBloodType,                          // ← save blood type
+      willDonate:             document.getElementById('donate-toggle').checked === true,  // boolean
+      isOrganDonor:           document.getElementById('organ-toggle').checked === true,
+      emergencyNotifications: document.getElementById('notif-toggle').checked === true,
       allergies:              document.getElementById('prof-allergies').value.trim(),
       conditions:             document.getElementById('prof-conditions').value.trim(),
       medications:            document.getElementById('prof-medications').value.trim(),
-      willDonate:             document.getElementById('donate-toggle').checked,
-      isOrganDonor:           document.getElementById('organ-toggle').checked,
-      emergencyNotifications: document.getElementById('notif-toggle').checked,
     };
 
     await updateUserProfile(currentUser.uid, updates);
@@ -179,10 +201,18 @@ window.saveProfile = async function() {
         </div>
 
         <div class="form-group">
-          <label>Blood Type</label>
-          <div class="form-control" id="prof-blood"
-               style="display:flex;align-items:center;font-family:var(--font-mono);
-                      font-weight:700;color:var(--red);font-size:1.1rem;">—</div>
+          <label>Blood Type <span style="color:var(--red);">(tap to change)</span></label>
+          <div id="prof-blood-grid" class="blood-type-grid" style="margin-top:0.3rem;">
+            <div class="blood-chip" data-type="A+">A+</div>
+            <div class="blood-chip" data-type="A-">A-</div>
+            <div class="blood-chip" data-type="B+">B+</div>
+            <div class="blood-chip" data-type="B-">B-</div>
+            <div class="blood-chip" data-type="AB+">AB+</div>
+            <div class="blood-chip" data-type="AB-">AB-</div>
+            <div class="blood-chip" data-type="O+">O+</div>
+            <div class="blood-chip" data-type="O-">O-</div>
+          </div>
+          <div id="prof-blood" style="display:none;"></div>
         </div>
 
       </div>
