@@ -13,7 +13,9 @@
 <script type="module">
 import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
          getBloodBankInventory, getAvailableBloodByType,
-         submitBloodRequest } from './firebase-db.js';
+         submitBloodRequest, db } from './firebase-db.js';
+import { collection, getDocs, query, where }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { injectShell, updateLocationDisplay, initMap } from './shell.js';
 
 injectShell();
@@ -29,9 +31,12 @@ onAuthChange(async user => {
   if (!user) { window.location.href = 'login.html'; return; }
   currentUser = user;
   currentProfile = await getUserProfile(user.uid);
-  if (currentProfile) {
-    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = currentProfile.name);
-    document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = currentProfile.name[0].toUpperCase());
+  const displayName = currentProfile?.name || user.displayName || 'User';
+  const initial     = displayName[0]?.toUpperCase() || 'U';
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = displayName);
+  document.querySelectorAll('.user-avatar-char').forEach(el  => el.textContent = initial);
+  if (currentProfile?.bloodType) {
+    document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = currentProfile.bloodType);
   }
   startGeolocation();
 });
@@ -68,6 +73,51 @@ async function loadBloodData() {
   allBanks = await getBloodBankInventory();
   initBloodMap();
   renderBankList(allBanks);
+  await loadDonorMembers();
+}
+
+// ── Load donor members from Firestore users collection ──
+async function loadDonorMembers() {
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), where('willDonate', '==', true)));
+    const donors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderDonorMembers(donors);
+  } catch(e) {
+    console.warn('Could not load donors:', e);
+  }
+}
+
+function renderDonorMembers(donors) {
+  const list = document.getElementById('donor-member-list');
+  if (!list) return;
+  if (!donors.length) {
+    list.innerHTML = '<div style="color:var(--slate);font-size:0.85rem;padding:1rem;">No donors registered yet.</div>';
+    return;
+  }
+  list.innerHTML = donors.map(d => {
+    const name    = d.name || 'Anonymous Donor';
+    const initial = name[0]?.toUpperCase() || 'D';
+    const city    = d.city || d.address?.split(',').slice(-2,-1)[0]?.trim() || 'Nearby';
+    return `
+    <div class="donor-card card-hover">
+      <div class="donor-blood-badge">${d.bloodType || '?'}</div>
+      <div class="donor-info">
+        <div class="donor-name-masked" style="color:var(--white);">🔒 ${name.split(' ')[0]} ${name.split(' ')[1]?.[0] || ''}.</div>
+        <div class="donor-id font-mono">${d.id}</div>
+        <div class="donor-distance" style="margin-top:0.2rem;">
+          📍 ${city}
+          ${d.isOrganDonor ? '<span class="badge badge-blue" style="margin-left:0.5rem;font-size:0.65rem;">Organ Donor</span>' : ''}
+        </div>
+      </div>
+      <div class="donor-actions">
+        <span class="badge badge-green">● Available</span>
+        <button class="btn btn-primary btn-sm"
+          onclick="requestFromDonor('${d.id}','${d.bloodType}','${name.split(' ')[0]}')">
+          Request
+        </button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function initBloodMap() {
@@ -162,6 +212,28 @@ function renderBankList(banks) {
       </div>`;
   }).join('');
 }
+
+window.requestFromDonor = async function(donorId, bloodType, firstName) {
+  if (!currentUser) return;
+  try {
+    await submitBloodRequest({
+      requesterId: currentUser.uid,
+      bloodType: bloodType,
+      urgency: document.getElementById('blood-urgency').value || 'urgent',
+      message: `Emergency ${bloodType} blood request`,
+      targetDonorId: donorId,
+      lat: userCoords[0],
+      lng: userCoords[1],
+    });
+    showToast(`Request sent to ${firstName}!`, 'success');
+    document.getElementById('notif-title').textContent = '🩸 Request Sent';
+    document.getElementById('notif-body').textContent =
+      `Your ${bloodType} blood request has been sent to ${firstName}. They will be notified immediately.`;
+    document.getElementById('notif-overlay').classList.remove('hidden');
+  } catch(e) {
+    showToast('Failed to send request', 'error');
+  }
+};
 
 window.focusBank = function(lat, lng) {
   bloodMap.flyTo([lat, lng], 16, { animate: true, duration: 0.8 });
@@ -284,6 +356,20 @@ window.searchBlood = async function() {
       </div>
     </div>
   </div>
+
+  <!-- Registered Donor Members Section -->
+  <div style="margin-top:2rem;">
+    <div class="section-header">
+      <div class="section-title-group">
+        <h3>🩸 Registered Blood Donors</h3>
+        <small>Real members from Devanahalli &amp; Doddaballapur · Names partially masked for privacy</small>
+      </div>
+    </div>
+    <div id="donor-member-list" class="donor-result-list">
+      <div class="spinner"></div>
+    </div>
+  </div>
+
 </div>
 </body>
 </html>
