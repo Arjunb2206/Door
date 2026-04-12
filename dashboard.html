@@ -48,14 +48,20 @@ document.getElementById('sign-out-btn').addEventListener('click', async () => {
 
 // ─── UI population ─────────────────────────
 function populateUI() {
-  const p = currentProfile;
-  if (!p) return;
-  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = p.name);
-  document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = p.name[0].toUpperCase());
-  document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = p.bloodType);
-  document.getElementById('dash-blood').textContent = p.bloodType;
-  document.getElementById('dash-donate-status').textContent = p.willDonate ? '● Active' : '● Inactive';
-  document.getElementById('dash-donate-status').className = `badge badge-${p.willDonate ? 'green' : 'amber'}`;
+  const p    = currentProfile;
+  const user = currentUser;
+  const name  = p?.name     || user?.displayName || 'User';
+  const blood = p?.bloodType || '—';
+  const initial = name[0]?.toUpperCase() || 'U';
+
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = name);
+  document.querySelectorAll('.user-avatar-char').forEach(el  => el.textContent = initial);
+  document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = blood);
+  document.getElementById('dash-blood').textContent = blood;
+
+  const donating = p?.willDonate ?? true;
+  document.getElementById('dash-donate-status').textContent = donating ? '● Active' : '● Inactive';
+  document.getElementById('dash-donate-status').className   = `badge badge-${donating ? 'green' : 'amber'}`;
 }
 
 // ─── Geolocation ───────────────────────────
