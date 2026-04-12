@@ -2,272 +2,538 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DoOr – Firebase Seeder (Admin)</title>
   <link rel="stylesheet" href="styles.css" />
   <style>
-    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
-    .seed-container { max-width: 700px; width: 100%; }
-    .seed-log { background: var(--dark); border: 1px solid var(--dark-4); border-radius: 10px; padding: 1rem; font-family: var(--font-mono); font-size: 0.78rem; max-height: 320px; overflow-y: auto; margin-top: 1rem; }
-    .log-ok   { color: var(--green); }
-    .log-err  { color: var(--red); }
-    .log-info { color: var(--accent); }
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:2rem; }
+    .seed-container { max-width:760px; width:100%; }
+    .seed-log {
+      background:var(--dark); border:1px solid var(--dark-4); border-radius:10px;
+      padding:1rem; font-family:var(--font-mono); font-size:0.78rem;
+      max-height:340px; overflow-y:auto; margin-top:1rem; line-height:1.7;
+    }
+    .log-ok   { color:var(--green); }
+    .log-err  { color:var(--red); }
+    .log-info { color:var(--accent); }
+    .log-head { color:var(--amber); font-weight:700; }
   </style>
 </head>
 <body class="bg-dots">
 <div class="seed-container">
   <div class="card">
-    <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1.5rem;">
+    <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1.2rem;">
       <div style="font-size:1.8rem;">🌱</div>
       <div>
-        <h2 style="margin:0;">Firebase Seeder</h2>
-        <p style="margin:0.2rem 0 0;">Populate Firestore with blood bank &amp; hospital data</p>
+        <h2 style="margin:0;">DoOr Firebase Seeder</h2>
+        <p style="margin:0.2rem 0 0;">Devanahalli &amp; Doddaballapur area — donors, hospitals, blood banks, chats</p>
       </div>
     </div>
 
-    <div style="background:rgba(255,184,48,0.1);border:1px solid rgba(255,184,48,0.3);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1.5rem;font-size:0.84rem;color:var(--amber);">
-      ⚠️ <strong>Admin only.</strong> Run this once to seed your Firestore database. Make sure you've set your Firebase config in <code>firebase-db.js</code> first, and that Firestore rules allow writes.
+    <div style="background:rgba(255,184,48,0.1);border:1px solid rgba(255,184,48,0.3);
+                border-radius:8px;padding:0.9rem 1rem;margin-bottom:1.2rem;font-size:0.84rem;color:var(--amber);">
+      ⚠️ <strong>Admin only.</strong> Run once after deploying. Make sure Firestore rules allow writes.
     </div>
 
-    <div style="display:flex;flex-direction:column;gap:0.8rem;">
-      <button class="btn btn-primary btn-lg btn-full" id="seed-all-btn" onclick="seedAll()">
-        🌱 Seed All Data (Blood Banks + Hospitals)
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:0.7rem;margin-bottom:0.7rem;">
+      <button class="btn btn-primary btn-lg" style="grid-column:1/-1;" id="seed-all-btn" onclick="seedAll()">
+        🌱 Seed Everything
       </button>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
-        <button class="btn btn-outline" onclick="seedBloodBanks()">🩸 Seed Blood Banks Only</button>
-        <button class="btn btn-outline" onclick="seedHospitals()">🏥 Seed Hospitals Only</button>
-      </div>
-      <button class="btn btn-ghost" onclick="clearLog()">🗑 Clear Log</button>
+      <button class="btn btn-outline btn-sm" onclick="seedDonors()">🩸 Donors (5)</button>
+      <button class="btn btn-outline btn-sm" onclick="seedBloodBanks()">🏦 Blood Banks</button>
+      <button class="btn btn-outline btn-sm" onclick="seedHospitals()">🏥 Hospitals</button>
+      <button class="btn btn-outline btn-sm" onclick="seedChats()">💬 Chats</button>
+      <button class="btn btn-outline btn-sm" onclick="seedRequests()">📋 Requests</button>
+      <button class="btn btn-ghost btn-sm" onclick="clearLog()">🗑 Clear Log</button>
     </div>
 
     <div class="seed-log" id="seed-log">
-      <span class="log-info">► Ready. Click a seed button to begin.</span>
+      <span class="log-info">► Ready. Click "Seed Everything" to populate all collections.</span>
     </div>
   </div>
 </div>
 
 <script type="module">
-import { db } from './firebase-db.js';
+import { db, auth } from './firebase-db.js';
 import {
-  collection, doc, setDoc, serverTimestamp
+  collection, doc, setDoc, addDoc, serverTimestamp, GeoPoint
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import {
+  createUserWithEmailAndPassword, updateProfile
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
-// ─── Seed Data ────────────────────────────────
-const BLOOD_BANKS = [
+// ══════════════════════════════════════════════
+//  DONOR MEMBERS — Devanahalli & Doddaballapur
+// ══════════════════════════════════════════════
+// Devanahalli center: 13.2459° N, 77.7116° E
+// Doddaballapur center: 13.2963° N, 77.5378° E
+
+const DONORS = [
   {
-    id: 'bank_001',
-    bankName: 'Apollo Blood Bank',
-    city: 'Bengaluru',
-    address: '28, Greams Lane, Thousand Lights, Bengaluru 600006',
-    lat: 12.9716, lng: 77.5946,
-    phone: '+91 80 2829 3333',
-    inventory: { 'A+': 24, 'A-': 8, 'B+': 18, 'B-': 5, 'AB+': 12, 'AB-': 3, 'O+': 30, 'O-': 9 },
+    id: 'donor_001',
+    uid: 'donor_001',
+    name: 'Ravi Kumar Sharma',
+    email: 'ravi.sharma@door.health',
+    phone: '+91 98450 11223',
+    bloodType: 'O+',
+    willDonate: true,
+    isOrganDonor: true,
+    emergencyNotifications: true,
+    location: new GeoPoint(13.2471, 77.7098),   // Devanahalli town
+    city: 'Devanahalli',
+    address: 'Near BIAL Gate 1, Devanahalli, Bengaluru Rural 562110',
+    allergies: '',
+    conditions: '',
+    medications: '',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   },
   {
-    id: 'bank_002',
-    bankName: 'Narayana Health Blood Bank',
-    city: 'Bengaluru',
-    address: '258/A, Bommasandra Industrial Area, Bengaluru 560099',
-    lat: 12.8352, lng: 77.6782,
-    phone: '+91 80 7122 2200',
-    inventory: { 'A+': 15, 'A-': 2, 'B+': 20, 'B-': 1, 'AB+': 6, 'AB-': 0, 'O+': 35, 'O-': 4 },
+    id: 'donor_002',
+    uid: 'donor_002',
+    name: 'Priya Nanjaiah',
+    email: 'priya.nanjaiah@door.health',
+    phone: '+91 97310 44556',
+    bloodType: 'B+',
+    willDonate: true,
+    isOrganDonor: false,
+    emergencyNotifications: true,
+    location: new GeoPoint(13.2438, 77.7132),   // Devanahalli
+    city: 'Devanahalli',
+    address: '14th Cross, Devanahalli Town, Bengaluru Rural 562110',
+    allergies: 'Penicillin',
+    conditions: '',
+    medications: '',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   },
   {
-    id: 'bank_003',
-    bankName: 'Manipal Hospital Blood Centre',
-    city: 'Bengaluru',
-    address: '98, HAL Airport Road, Bengaluru 560017',
-    lat: 12.9592, lng: 77.6484,
-    phone: '+91 80 2502 4444',
-    inventory: { 'A+': 8, 'A-': 12, 'B+': 5, 'B-': 8, 'AB+': 4, 'AB-': 2, 'O+': 22, 'O-': 7 },
+    id: 'donor_003',
+    uid: 'donor_003',
+    name: 'Mohammed Irfan',
+    email: 'irfan.m@door.health',
+    phone: '+91 96202 77889',
+    bloodType: 'A+',
+    willDonate: true,
+    isOrganDonor: true,
+    emergencyNotifications: true,
+    location: new GeoPoint(13.2990, 77.5365),   // Doddaballapur center
+    city: 'Doddaballapur',
+    address: 'Silk Board Layout, Doddaballapur 561203',
+    allergies: '',
+    conditions: 'Mild Hypertension',
+    medications: 'Amlodipine 5mg',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   },
   {
-    id: 'bank_004',
-    bankName: 'Fortis Blood Bank',
-    city: 'Bengaluru',
-    address: '14, Cunningham Road, Bengaluru 560052',
-    lat: 12.9762, lng: 77.5929,
-    phone: '+91 80 6621 4444',
-    inventory: { 'A+': 30, 'A-': 5, 'B+': 25, 'B-': 3, 'AB+': 10, 'AB-': 1, 'O+': 40, 'O-': 6 },
+    id: 'donor_004',
+    uid: 'donor_004',
+    name: 'Lakshmi Devi Reddy',
+    email: 'lakshmi.reddy@door.health',
+    phone: '+91 94483 22110',
+    bloodType: 'AB+',
+    willDonate: true,
+    isOrganDonor: false,
+    emergencyNotifications: true,
+    location: new GeoPoint(13.3012, 77.5390),   // Doddaballapur north
+    city: 'Doddaballapur',
+    address: 'Gandhi Nagar, Doddaballapur 561203',
+    allergies: 'Latex',
+    conditions: '',
+    medications: '',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   },
   {
-    id: 'bank_005',
-    bankName: 'Victoria Hospital Blood Bank',
-    city: 'Bengaluru',
-    address: 'K.R. Market Circle, Bengaluru 560002',
-    lat: 12.9699, lng: 77.5765,
-    phone: '+91 80 2670 1150',
-    inventory: { 'A+': 0, 'A-': 1, 'B+': 3, 'B-': 0, 'AB+': 0, 'AB-': 0, 'O+': 7, 'O-': 2 },
+    id: 'donor_005',
+    uid: 'donor_005',
+    name: 'Suresh Gowda',
+    email: 'suresh.gowda@door.health',
+    phone: '+91 91080 55667',
+    bloodType: 'O-',
+    willDonate: true,
+    isOrganDonor: true,
+    emergencyNotifications: true,
+    location: new GeoPoint(13.2680, 77.6250),   // Between both — Nandi Hills road
+    city: 'Devanahalli',
+    address: 'Sadahalli Village, Devanahalli Taluk 562110',
+    allergies: '',
+    conditions: 'Type 2 Diabetes',
+    medications: 'Metformin 500mg',
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
   },
 ];
 
+// ══════════════════════════════════════════════
+//  BLOOD BANKS — Devanahalli & Doddaballapur
+// ══════════════════════════════════════════════
+const BLOOD_BANKS = [
+  {
+    id: 'bank_dev_001',
+    bankName: 'Devanahalli Government Blood Bank',
+    city: 'Devanahalli',
+    address: 'Taluk Hospital Campus, Devanahalli, Bengaluru Rural 562110',
+    lat: 13.2462, lng: 77.7108,
+    phone: '+91 80 2768 0123',
+    inventory: { 'A+':12, 'A-':3, 'B+':18, 'B-':2, 'AB+':6, 'AB-':1, 'O+':24, 'O-':8 },
+  },
+  {
+    id: 'bank_dev_002',
+    bankName: 'BIAL Airport Area Blood Centre',
+    city: 'Devanahalli',
+    address: 'NH 44, Near Kempegowda International Airport, Devanahalli 562149',
+    lat: 13.1979, lng: 77.7063,
+    phone: '+91 80 6678 9900',
+    inventory: { 'A+':20, 'A-':5, 'B+':15, 'B-':4, 'AB+':9, 'AB-':2, 'O+':30, 'O-':7 },
+  },
+  {
+    id: 'bank_dod_001',
+    bankName: 'Doddaballapur Taluk Blood Bank',
+    city: 'Doddaballapur',
+    address: 'Government Hospital Road, Doddaballapur 561203',
+    lat: 13.2985, lng: 77.5372,
+    phone: '+91 80 7719 2233',
+    inventory: { 'A+':8, 'A-':1, 'B+':10, 'B-':0, 'AB+':3, 'AB-':0, 'O+':14, 'O-':3 },
+  },
+  {
+    id: 'bank_dod_002',
+    bankName: 'Sri Venkateshwara Blood Bank',
+    city: 'Doddaballapur',
+    address: '2nd Main, Industrial Area, Doddaballapur 561203',
+    lat: 13.3045, lng: 77.5410,
+    phone: '+91 80 2765 8844',
+    inventory: { 'A+':16, 'A-':4, 'B+':22, 'B-':3, 'AB+':7, 'AB-':1, 'O+':28, 'O-':5 },
+  },
+  {
+    id: 'bank_mid_001',
+    bankName: 'Apollo Clinic Blood Collection',
+    city: 'Devanahalli',
+    address: 'Vijayapura Cross, Bengaluru–Hyderabad Highway, Devanahalli 562110',
+    lat: 13.2520, lng: 77.6980,
+    phone: '+91 80 2769 4411',
+    inventory: { 'A+':5, 'A-':2, 'B+':7, 'B-':1, 'AB+':2, 'AB-':0, 'O+':10, 'O-':4 },
+  },
+];
+
+// ══════════════════════════════════════════════
+//  HOSPITALS — Devanahalli & Doddaballapur
+// ══════════════════════════════════════════════
 const HOSPITALS = [
   {
-    id: 'hosp_001',
-    name: 'Apollo Hospital Bengaluru',
-    city: 'Bengaluru',
-    address: '154/11, Bannerghatta Road, Bengaluru 560076',
-    lat: 12.9020, lng: 77.5965,
-    phone: '+91 80 2630 4050',
+    id: 'hosp_dev_001',
+    name: 'Devanahalli Taluk Government Hospital',
+    city: 'Devanahalli',
+    address: 'Hospital Road, Devanahalli, Bengaluru Rural 562110',
+    lat: 13.2460, lng: 77.7105,
+    phone: '+91 80 2768 0100',
     emergencyServices: true,
-    beds: 350,
-    rating: 4.7,
+    beds: 150,
+    rating: 3.9,
     organs: {
-      Kidney: true, Liver: true, Heart: false,
+      Kidney: true, Liver: false, Heart: false,
+      Lung: false, Pancreas: false, Cornea: true,
+      'Bone Marrow': false, Skin: false,
+    },
+  },
+  {
+    id: 'hosp_dev_002',
+    name: 'Narayana Multispeciality Hospital Devanahalli',
+    city: 'Devanahalli',
+    address: 'NH 44, Shettigere Road, Devanahalli 562110',
+    lat: 13.2501, lng: 77.7055,
+    phone: '+91 80 7122 3344',
+    emergencyServices: true,
+    beds: 280,
+    rating: 4.5,
+    organs: {
+      Kidney: true, Liver: true, Heart: true,
       Lung: false, Pancreas: true, Cornea: true,
       'Bone Marrow': true, Skin: false,
     },
   },
   {
-    id: 'hosp_002',
-    name: 'Fortis Hospital Cunningham Road',
-    city: 'Bengaluru',
-    address: '14, Cunningham Road, Bengaluru 560052',
-    lat: 12.9762, lng: 77.5929,
-    phone: '+91 80 6621 4444',
+    id: 'hosp_dev_003',
+    name: 'BIAL Medical Centre (Airport)',
+    city: 'Devanahalli',
+    address: 'Kempegowda International Airport, Devanahalli 562149',
+    lat: 13.1989, lng: 77.7060,
+    phone: '+91 80 6678 5000',
+    emergencyServices: true,
+    beds: 40,
+    rating: 4.3,
+    organs: {
+      Kidney: false, Liver: false, Heart: false,
+      Lung: false, Pancreas: false, Cornea: true,
+      'Bone Marrow': false, Skin: true,
+    },
+  },
+  {
+    id: 'hosp_dod_001',
+    name: 'Doddaballapur Government District Hospital',
+    city: 'Doddaballapur',
+    address: 'B.B. Road, Doddaballapur, Bengaluru Rural 561203',
+    lat: 13.2978, lng: 77.5368,
+    phone: '+91 80 7719 0011',
     emergencyServices: true,
     beds: 200,
-    rating: 4.5,
-    organs: {
-      Kidney: true, Liver: false, Heart: true,
-      Lung: false, Pancreas: false, Cornea: true,
-      'Bone Marrow': true, Skin: false,
-    },
-  },
-  {
-    id: 'hosp_003',
-    name: 'Manipal Hospital HAL Airport Road',
-    city: 'Bengaluru',
-    address: '98, HAL Airport Road, Bengaluru 560017',
-    lat: 12.9592, lng: 77.6484,
-    phone: '+91 80 2502 4444',
-    emergencyServices: true,
-    beds: 600,
-    rating: 4.8,
-    organs: {
-      Kidney: true, Liver: true, Heart: true,
-      Lung: true, Pancreas: true, Cornea: true,
-      'Bone Marrow': false, Skin: true,
-    },
-  },
-  {
-    id: 'hosp_004',
-    name: 'Narayana Health City',
-    city: 'Bengaluru',
-    address: '258/A, Bommasandra Industrial Area, Bengaluru 560099',
-    lat: 12.8352, lng: 77.6782,
-    phone: '+91 80 7122 2200',
-    emergencyServices: true,
-    beds: 1000,
-    rating: 4.6,
-    organs: {
-      Kidney: false, Liver: true, Heart: false,
-      Lung: false, Pancreas: false, Cornea: true,
-      'Bone Marrow': true, Skin: false,
-    },
-  },
-  {
-    id: 'hosp_005',
-    name: 'St. John\'s Medical College Hospital',
-    city: 'Bengaluru',
-    address: 'Sarjapur Road, Koramangala, Bengaluru 560034',
-    lat: 12.9342, lng: 77.6198,
-    phone: '+91 80 2206 5000',
-    emergencyServices: true,
-    beds: 1250,
-    rating: 4.4,
+    rating: 4.0,
     organs: {
       Kidney: true, Liver: false, Heart: false,
-      Lung: false, Pancreas: true, Cornea: false,
+      Lung: false, Pancreas: false, Cornea: true,
       'Bone Marrow': false, Skin: true,
     },
   },
   {
-    id: 'hosp_006',
-    name: 'Sakra World Hospital',
-    city: 'Bengaluru',
-    address: 'Devarabisanahalli, Outer Ring Road, Bengaluru 560103',
-    lat: 12.9445, lng: 77.6913,
-    phone: '+91 80 4969 4969',
+    id: 'hosp_dod_002',
+    name: 'Sri Sai Multispeciality Hospital',
+    city: 'Doddaballapur',
+    address: 'Industrial Town, Doddaballapur 561203',
+    lat: 13.3038, lng: 77.5402,
+    phone: '+91 80 2765 9922',
     emergencyServices: false,
-    beds: 300,
-    rating: 4.5,
+    beds: 120,
+    rating: 4.2,
     organs: {
       Kidney: true, Liver: true, Heart: false,
-      Lung: false, Pancreas: false, Cornea: true,
+      Lung: false, Pancreas: true, Cornea: true,
       'Bone Marrow': false, Skin: false,
+    },
+  },
+  {
+    id: 'hosp_mid_001',
+    name: 'Vijayashree Institute of Medical Sciences',
+    city: 'Devanahalli',
+    address: 'Vijayapura, Devanahalli Taluk, Bengaluru Rural 562135',
+    lat: 13.2260, lng: 77.6850,
+    phone: '+91 80 2769 7788',
+    emergencyServices: true,
+    beds: 350,
+    rating: 4.4,
+    organs: {
+      Kidney: true, Liver: true, Heart: true,
+      Lung: true, Pancreas: false, Cornea: true,
+      'Bone Marrow': true, Skin: true,
     },
   },
 ];
 
-// ─── Seeder Functions ─────────────────────────
+// ══════════════════════════════════════════════
+//  BLOOD REQUESTS (sample pending)
+// ══════════════════════════════════════════════
+const BLOOD_REQUESTS = [
+  {
+    requesterId: 'donor_003',
+    requesterName: 'Mohammed Irfan',
+    bloodType: 'O+',
+    urgency: 'critical',
+    message: 'Patient in ICU at Narayana Devanahalli needs O+ blood urgently',
+    lat: 13.2501, lng: 77.7055,
+    status: 'pending',
+  },
+  {
+    requesterId: 'donor_004',
+    requesterName: 'Lakshmi Devi Reddy',
+    bloodType: 'B+',
+    urgency: 'urgent',
+    message: 'Surgery scheduled in 4 hours, need 2 units B+',
+    lat: 13.2978, lng: 77.5368,
+    status: 'pending',
+  },
+];
+
+// ══════════════════════════════════════════════
+//  ORGAN REQUESTS (sample pending)
+// ══════════════════════════════════════════════
+const ORGAN_REQUESTS = [
+  {
+    requesterId: 'donor_001',
+    requesterName: 'Ravi Kumar Sharma',
+    organType: 'Kidney',
+    bloodType: 'O+',
+    urgency: 'critical',
+    hospitalName: 'Narayana Multispeciality Hospital Devanahalli',
+    notes: 'Patient on dialysis for 2 years. Urgent match needed.',
+    lat: 13.2501, lng: 77.7055,
+    status: 'pending',
+  },
+  {
+    requesterId: 'donor_005',
+    requesterName: 'Suresh Gowda',
+    organType: 'Cornea',
+    bloodType: 'O-',
+    urgency: 'urgent',
+    hospitalName: 'Devanahalli Taluk Government Hospital',
+    notes: 'Eye injury from accident. Cornea required within 48 hours.',
+    lat: 13.2460, lng: 77.7105,
+    status: 'pending',
+  },
+];
+
+// ══════════════════════════════════════════════
+//  CHAT MESSAGES
+//  roomId = sorted UIDs joined by "_"
+// ══════════════════════════════════════════════
+const CHATS = [
+  {
+    roomId: 'donor_001_donor_003',
+    messages: [
+      { senderId: 'donor_003', text: 'Hello Ravi, I received your kidney request. I am O+ and willing to help.', minsAgo: 45 },
+      { senderId: 'donor_001', text: 'Thank you so much! The patient is at Narayana Hospital Devanahalli.', minsAgo: 43 },
+      { senderId: 'donor_003', text: 'I can be there in 20 minutes. Should I come to the emergency ward?', minsAgo: 41 },
+      { senderId: 'donor_001', text: 'Yes please! Ask for Dr. Suresh at the transplant unit. We really appreciate this.', minsAgo: 40 },
+      { senderId: 'donor_003', text: 'On my way. Will be there by 3:30 PM. Stay strong!', minsAgo: 38 },
+    ],
+  },
+  {
+    roomId: 'donor_002_donor_004',
+    messages: [
+      { senderId: 'donor_004', text: 'Hi Priya, I saw your B+ blood request for the surgery. I have B+ blood.', minsAgo: 120 },
+      { senderId: 'donor_002', text: 'Oh thank you! Can you come to Doddaballapur Government Hospital?', minsAgo: 118 },
+      { senderId: 'donor_004', text: 'Yes, I live nearby in Gandhi Nagar. I can be there in 10 minutes.', minsAgo: 116 },
+      { senderId: 'donor_002', text: 'That is wonderful! Please bring your ID. Surgery is at 6 PM.', minsAgo: 114 },
+      { senderId: 'donor_004', text: 'Got it. See you soon. God bless!', minsAgo: 113 },
+      { senderId: 'donor_002', text: 'Thank you from the bottom of our hearts 🙏', minsAgo: 110 },
+    ],
+  },
+  {
+    roomId: 'donor_001_donor_005',
+    messages: [
+      { senderId: 'donor_005', text: 'Ravi bhai, I am Suresh from Sadahalli. I heard you need a kidney donor.', minsAgo: 200 },
+      { senderId: 'donor_001', text: 'Yes Suresh ji. Patient is my uncle. He is very critical.', minsAgo: 198 },
+      { senderId: 'donor_005', text: 'I am O- universal donor. I have registered as organ donor. Please contact my doctor.', minsAgo: 195 },
+      { senderId: 'donor_001', text: 'This means everything to us. Can we meet tomorrow at Narayana Hospital?', minsAgo: 192 },
+      { senderId: 'donor_005', text: 'Of course. 10 AM works for me. I will bring all my medical reports.', minsAgo: 190 },
+    ],
+  },
+];
+
+// ─── Logger ───────────────────────────────────
 function log(msg, type = 'info') {
   const logEl = document.getElementById('seed-log');
-  const span = document.createElement('div');
-  span.className = `log-${type}`;
-  span.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  logEl.appendChild(span);
+  const div = document.createElement('div');
+  div.className = `log-${type}`;
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.appendChild(div);
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-window.clearLog = function() {
+window.clearLog = () => {
   document.getElementById('seed-log').innerHTML = '<span class="log-info">► Log cleared.</span>';
 };
 
-async function writeBloodBanks() {
-  log('Seeding blood banks…', 'info');
+// ─── Seed Donors ──────────────────────────────
+window.seedDonors = async function() {
+  log('━━ Seeding 5 donor members (Devanahalli & Doddaballapur)…', 'head');
+  for (const donor of DONORS) {
+    try {
+      const { id, ...data } = donor;
+      await setDoc(doc(db, 'users', id), data);
+      log(`✓ ${donor.name} · ${donor.bloodType} · ${donor.city}`, 'ok');
+    } catch(e) {
+      log(`✗ ${donor.name}: ${e.message}`, 'err');
+    }
+  }
+  log(`Donors done (${DONORS.length} records written)`, 'ok');
+};
+
+// ─── Seed Blood Banks ─────────────────────────
+window.seedBloodBanks = async function() {
+  log('━━ Seeding blood banks…', 'head');
   for (const bank of BLOOD_BANKS) {
     try {
       const { id, ...data } = bank;
-      await setDoc(doc(db, 'blood_bank', id), {
-        ...data,
-        updatedAt: serverTimestamp(),
-      });
-      log(`✓ ${bank.bankName}`, 'ok');
+      await setDoc(doc(db, 'blood_bank', id), { ...data, updatedAt: serverTimestamp() });
+      const total = Object.values(data.inventory).reduce((s,v)=>s+v,0);
+      log(`✓ ${bank.bankName} · ${bank.city} · ${total} units`, 'ok');
     } catch(e) {
       log(`✗ ${bank.bankName}: ${e.message}`, 'err');
     }
   }
   log(`Blood banks done (${BLOOD_BANKS.length} records)`, 'ok');
-}
+};
 
-async function writeHospitals() {
-  log('Seeding hospitals…', 'info');
+// ─── Seed Hospitals ───────────────────────────
+window.seedHospitals = async function() {
+  log('━━ Seeding hospitals with organ availability…', 'head');
   for (const hosp of HOSPITALS) {
     try {
       const { id, ...data } = hosp;
-      await setDoc(doc(db, 'hospitals', id), {
-        ...data,
-        updatedAt: serverTimestamp(),
-      });
-      log(`✓ ${hosp.name}`, 'ok');
+      await setDoc(doc(db, 'hospitals', id), { ...data, updatedAt: serverTimestamp() });
+      const availOrgans = Object.entries(hosp.organs).filter(([,v])=>v).map(([k])=>k).join(', ');
+      log(`✓ ${hosp.name} · ${hosp.city} · Organs: ${availOrgans || 'none'}`, 'ok');
     } catch(e) {
       log(`✗ ${hosp.name}: ${e.message}`, 'err');
     }
   }
   log(`Hospitals done (${HOSPITALS.length} records)`, 'ok');
-}
-
-window.seedBloodBanks = async function() {
-  document.getElementById('seed-all-btn').disabled = true;
-  await writeBloodBanks();
-  document.getElementById('seed-all-btn').disabled = false;
 };
 
-window.seedHospitals = async function() {
-  document.getElementById('seed-all-btn').disabled = true;
-  await writeHospitals();
-  document.getElementById('seed-all-btn').disabled = false;
+// ─── Seed Chat Messages ───────────────────────
+window.seedChats = async function() {
+  log('━━ Seeding chat messages between donors…', 'head');
+  for (const chat of CHATS) {
+    try {
+      for (const msg of chat.messages) {
+        const msgTime = new Date(Date.now() - msg.minsAgo * 60 * 1000);
+        await addDoc(collection(db, 'messages', chat.roomId, 'msgs'), {
+          senderId:  msg.senderId,
+          text:      msg.text,
+          timestamp: msgTime,
+        });
+      }
+      log(`✓ Room ${chat.roomId} · ${chat.messages.length} messages`, 'ok');
+    } catch(e) {
+      log(`✗ Chat ${chat.roomId}: ${e.message}`, 'err');
+    }
+  }
+  log(`Chats done (${CHATS.length} rooms seeded)`, 'ok');
 };
 
+// ─── Seed Requests ────────────────────────────
+window.seedRequests = async function() {
+  log('━━ Seeding blood & organ requests…', 'head');
+  for (const req of BLOOD_REQUESTS) {
+    try {
+      await addDoc(collection(db, 'blood_requests'), { ...req, createdAt: serverTimestamp() });
+      log(`✓ Blood req: ${req.bloodType} · ${req.urgency} · by ${req.requesterName}`, 'ok');
+    } catch(e) {
+      log(`✗ Blood req: ${e.message}`, 'err');
+    }
+  }
+  for (const req of ORGAN_REQUESTS) {
+    try {
+      await addDoc(collection(db, 'organ_requests'), { ...req, createdAt: serverTimestamp() });
+      log(`✓ Organ req: ${req.organType} · ${req.urgency} · by ${req.requesterName}`, 'ok');
+    } catch(e) {
+      log(`✗ Organ req: ${e.message}`, 'err');
+    }
+  }
+  log(`Requests done`, 'ok');
+};
+
+// ─── Seed All ─────────────────────────────────
 window.seedAll = async function() {
   const btn = document.getElementById('seed-all-btn');
   btn.textContent = 'Seeding…';
   btn.disabled = true;
-  await writeBloodBanks();
-  await writeHospitals();
-  log('═══ All data seeded successfully! ═══', 'ok');
-  btn.textContent = '✅ Seed Complete';
-  setTimeout(() => { btn.textContent = '🌱 Seed All Data (Blood Banks + Hospitals)'; btn.disabled = false; }, 3000);
+
+  await seedDonors();
+  await seedBloodBanks();
+  await seedHospitals();
+  await seedChats();
+  await seedRequests();
+
+  log('══════════════════════════════════════════', 'head');
+  log('✅ All data seeded! Open the app to verify.', 'ok');
+  log('══════════════════════════════════════════', 'head');
+
+  btn.textContent = '✅ All Done!';
+  setTimeout(() => {
+    btn.textContent = '🌱 Seed Everything';
+    btn.disabled = false;
+  }, 4000);
 };
 </script>
 </body>
