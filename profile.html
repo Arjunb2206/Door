@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – My Profile</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="bg-dots" data-page="profile">
+
+<script type="module">
+import { onAuthChange, getUserProfile, logoutUser, updateUserProfile } from './firebase-db.js';
+import { injectShell, updateLocationDisplay } from './shell.js';
+
+injectShell();
+
+let currentUser = null;
+let currentProfile = null;
+
+onAuthChange(async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  currentProfile = await getUserProfile(user.uid);
+  if (!currentProfile) return;
+
+  // Populate all displays
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = currentProfile.name);
+  document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = currentProfile.name[0].toUpperCase());
+  document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = currentProfile.bloodType);
+
+  document.getElementById('prof-name').value    = currentProfile.name || '';
+  document.getElementById('prof-email').value   = currentProfile.email || '';
+  document.getElementById('prof-phone').value   = currentProfile.phone || '';
+  document.getElementById('prof-blood').textContent = currentProfile.bloodType || '—';
+  document.getElementById('prof-allergies').value   = currentProfile.allergies || '';
+  document.getElementById('prof-conditions').value  = currentProfile.conditions || '';
+  document.getElementById('prof-medications').value = currentProfile.medications || '';
+  document.getElementById('donate-toggle').checked  = currentProfile.willDonate ?? true;
+  document.getElementById('organ-toggle').checked   = currentProfile.isOrganDonor ?? false;
+  document.getElementById('notif-toggle').checked   = currentProfile.emergencyNotifications ?? true;
+
+  document.getElementById('profile-donate-badge').textContent = currentProfile.willDonate ? '● Willing to Donate' : '● Not Donating';
+  document.getElementById('profile-donate-badge').className = `badge badge-${currentProfile.willDonate ? 'green' : 'amber'}`;
+});
+
+const doSignOut = async () => { await logoutUser(); window.location.href = 'login.html'; };
+document.getElementById('sign-out-btn').addEventListener('click', doSignOut);
+window.doSignOut = doSignOut;
+
+window.saveProfile = async function() {
+  const saveBtn = document.getElementById('save-btn');
+  saveBtn.textContent = 'Saving…';
+  saveBtn.disabled = true;
+
+  try {
+    const updates = {
+      name:       document.getElementById('prof-name').value.trim(),
+      phone:      document.getElementById('prof-phone').value.trim(),
+      allergies:  document.getElementById('prof-allergies').value.trim(),
+      conditions: document.getElementById('prof-conditions').value.trim(),
+      medications:document.getElementById('prof-medications').value.trim(),
+      willDonate: document.getElementById('donate-toggle').checked,
+      isOrganDonor:           document.getElementById('organ-toggle').checked,
+      emergencyNotifications: document.getElementById('notif-toggle').checked,
+    };
+    await updateUserProfile(currentUser.uid, updates);
+    showToast('Profile updated successfully!', 'success');
+    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = updates.name);
+    document.getElementById('profile-donate-badge').textContent = updates.willDonate ? '● Willing to Donate' : '● Not Donating';
+    document.getElementById('profile-donate-badge').className = `badge badge-${updates.willDonate ? 'green' : 'amber'}`;
+  } catch(e) {
+    showToast('Failed to save: ' + e.message, 'error');
+  } finally {
+    saveBtn.textContent = '💾 Save Changes';
+    saveBtn.disabled = false;
+  }
+};
+</script>
+
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+  <div class="dash-header">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
+    <h1>My Profile</h1>
+  </div>
+
+  <!-- Profile Header -->
+  <div class="profile-header">
+    <div class="profile-avatar user-avatar-char">A</div>
+    <div class="profile-meta">
+      <div class="profile-name user-name-display"></div>
+      <div style="color:var(--slate);font-size:0.85rem;" id="prof-email-display"></div>
+      <div class="profile-tags">
+        <span class="badge badge-red user-blood-display font-mono">O+</span>
+        <span id="profile-donate-badge" class="badge badge-green">● Willing to Donate</span>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.2rem;">
+    <!-- Personal Info -->
+    <div class="card">
+      <h3 style="margin-bottom:1.2rem;">Personal Information</h3>
+      <div style="display:flex;flex-direction:column;gap:1rem;">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input class="form-control" id="prof-name" type="text" />
+        </div>
+        <div class="form-group">
+          <label>Email Address</label>
+          <input class="form-control" id="prof-email" type="email" disabled style="opacity:0.6;cursor:not-allowed;" />
+        </div>
+        <div class="form-group">
+          <label>Phone (masked in calls)</label>
+          <input class="form-control" id="prof-phone" type="tel" placeholder="+91 XXXXXXXXXX" />
+        </div>
+        <div class="form-group">
+          <label>Blood Type</label>
+          <div class="form-control" id="prof-blood" style="display:flex;align-items:center;font-family:var(--font-mono);font-weight:700;color:var(--red);">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <!-- Medical Info -->
+      <div class="card" style="margin-bottom:1rem;">
+        <h3 style="margin-bottom:1rem;">Medical Information</h3>
+        <div style="display:flex;flex-direction:column;gap:1rem;">
+          <div class="form-group">
+            <label>Known Allergies</label>
+            <input class="form-control" id="prof-allergies" type="text" placeholder="e.g. Penicillin, Latex" />
+          </div>
+          <div class="form-group">
+            <label>Chronic Conditions</label>
+            <textarea class="form-control" id="prof-conditions" rows="2" placeholder="e.g. Hypertension, Diabetes" style="resize:none;"></textarea>
+          </div>
+          <div class="form-group">
+            <label>Current Medications</label>
+            <textarea class="form-control" id="prof-medications" rows="2" placeholder="e.g. Metformin 500mg" style="resize:none;"></textarea>
+          </div>
+        </div>
+      </div>
+
+      <!-- Donation Preferences -->
+      <div class="card">
+        <h3 style="margin-bottom:1rem;">Donation Preferences</h3>
+        <div style="display:flex;flex-direction:column;gap:0.75rem;">
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:0.88rem;font-weight:500;">Willing to Donate Blood</div>
+              <div style="font-size:0.75rem;color:var(--slate);">Appear in blood search results</div>
+            </div>
+            <label class="toggle-switch"><input type="checkbox" id="donate-toggle" checked /><span class="toggle-slider"></span></label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:0.88rem;font-weight:500;">Organ Donor</div>
+              <div style="font-size:0.75rem;color:var(--slate);">Registered organ donor status</div>
+            </div>
+            <label class="toggle-switch"><input type="checkbox" id="organ-toggle" /><span class="toggle-slider"></span></label>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <div>
+              <div style="font-size:0.88rem;font-weight:500;">Emergency Notifications</div>
+              <div style="font-size:0.75rem;color:var(--slate);">Receive full-screen alerts</div>
+            </div>
+            <label class="toggle-switch"><input type="checkbox" id="notif-toggle" checked /><span class="toggle-slider"></span></label>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:1rem;display:flex;gap:0.75rem;justify-content:flex-end;">
+    <button class="btn btn-outline" onclick="doSignOut()">Sign Out</button>
+    <button class="btn btn-primary" id="save-btn" onclick="saveProfile()">💾 Save Changes</button>
+  </div>
+</div>
+</body>
+</html>

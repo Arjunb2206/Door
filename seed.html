@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>DoOr – Firebase Seeder (Admin)</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; }
+    .seed-container { max-width: 700px; width: 100%; }
+    .seed-log { background: var(--dark); border: 1px solid var(--dark-4); border-radius: 10px; padding: 1rem; font-family: var(--font-mono); font-size: 0.78rem; max-height: 320px; overflow-y: auto; margin-top: 1rem; }
+    .log-ok   { color: var(--green); }
+    .log-err  { color: var(--red); }
+    .log-info { color: var(--accent); }
+  </style>
+</head>
+<body class="bg-dots">
+<div class="seed-container">
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:1.5rem;">
+      <div style="font-size:1.8rem;">🌱</div>
+      <div>
+        <h2 style="margin:0;">Firebase Seeder</h2>
+        <p style="margin:0.2rem 0 0;">Populate Firestore with blood bank &amp; hospital data</p>
+      </div>
+    </div>
+
+    <div style="background:rgba(255,184,48,0.1);border:1px solid rgba(255,184,48,0.3);border-radius:8px;padding:0.9rem 1rem;margin-bottom:1.5rem;font-size:0.84rem;color:var(--amber);">
+      ⚠️ <strong>Admin only.</strong> Run this once to seed your Firestore database. Make sure you've set your Firebase config in <code>firebase-db.js</code> first, and that Firestore rules allow writes.
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:0.8rem;">
+      <button class="btn btn-primary btn-lg btn-full" id="seed-all-btn" onclick="seedAll()">
+        🌱 Seed All Data (Blood Banks + Hospitals)
+      </button>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.8rem;">
+        <button class="btn btn-outline" onclick="seedBloodBanks()">🩸 Seed Blood Banks Only</button>
+        <button class="btn btn-outline" onclick="seedHospitals()">🏥 Seed Hospitals Only</button>
+      </div>
+      <button class="btn btn-ghost" onclick="clearLog()">🗑 Clear Log</button>
+    </div>
+
+    <div class="seed-log" id="seed-log">
+      <span class="log-info">► Ready. Click a seed button to begin.</span>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { db } from './firebase-db.js';
+import {
+  collection, doc, setDoc, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ─── Seed Data ────────────────────────────────
+const BLOOD_BANKS = [
+  {
+    id: 'bank_001',
+    bankName: 'Apollo Blood Bank',
+    city: 'Bengaluru',
+    address: '28, Greams Lane, Thousand Lights, Bengaluru 600006',
+    lat: 12.9716, lng: 77.5946,
+    phone: '+91 80 2829 3333',
+    inventory: { 'A+': 24, 'A-': 8, 'B+': 18, 'B-': 5, 'AB+': 12, 'AB-': 3, 'O+': 30, 'O-': 9 },
+  },
+  {
+    id: 'bank_002',
+    bankName: 'Narayana Health Blood Bank',
+    city: 'Bengaluru',
+    address: '258/A, Bommasandra Industrial Area, Bengaluru 560099',
+    lat: 12.8352, lng: 77.6782,
+    phone: '+91 80 7122 2200',
+    inventory: { 'A+': 15, 'A-': 2, 'B+': 20, 'B-': 1, 'AB+': 6, 'AB-': 0, 'O+': 35, 'O-': 4 },
+  },
+  {
+    id: 'bank_003',
+    bankName: 'Manipal Hospital Blood Centre',
+    city: 'Bengaluru',
+    address: '98, HAL Airport Road, Bengaluru 560017',
+    lat: 12.9592, lng: 77.6484,
+    phone: '+91 80 2502 4444',
+    inventory: { 'A+': 8, 'A-': 12, 'B+': 5, 'B-': 8, 'AB+': 4, 'AB-': 2, 'O+': 22, 'O-': 7 },
+  },
+  {
+    id: 'bank_004',
+    bankName: 'Fortis Blood Bank',
+    city: 'Bengaluru',
+    address: '14, Cunningham Road, Bengaluru 560052',
+    lat: 12.9762, lng: 77.5929,
+    phone: '+91 80 6621 4444',
+    inventory: { 'A+': 30, 'A-': 5, 'B+': 25, 'B-': 3, 'AB+': 10, 'AB-': 1, 'O+': 40, 'O-': 6 },
+  },
+  {
+    id: 'bank_005',
+    bankName: 'Victoria Hospital Blood Bank',
+    city: 'Bengaluru',
+    address: 'K.R. Market Circle, Bengaluru 560002',
+    lat: 12.9699, lng: 77.5765,
+    phone: '+91 80 2670 1150',
+    inventory: { 'A+': 0, 'A-': 1, 'B+': 3, 'B-': 0, 'AB+': 0, 'AB-': 0, 'O+': 7, 'O-': 2 },
+  },
+];
+
+const HOSPITALS = [
+  {
+    id: 'hosp_001',
+    name: 'Apollo Hospital Bengaluru',
+    city: 'Bengaluru',
+    address: '154/11, Bannerghatta Road, Bengaluru 560076',
+    lat: 12.9020, lng: 77.5965,
+    phone: '+91 80 2630 4050',
+    emergencyServices: true,
+    beds: 350,
+    rating: 4.7,
+    organs: {
+      Kidney: true, Liver: true, Heart: false,
+      Lung: false, Pancreas: true, Cornea: true,
+      'Bone Marrow': true, Skin: false,
+    },
+  },
+  {
+    id: 'hosp_002',
+    name: 'Fortis Hospital Cunningham Road',
+    city: 'Bengaluru',
+    address: '14, Cunningham Road, Bengaluru 560052',
+    lat: 12.9762, lng: 77.5929,
+    phone: '+91 80 6621 4444',
+    emergencyServices: true,
+    beds: 200,
+    rating: 4.5,
+    organs: {
+      Kidney: true, Liver: false, Heart: true,
+      Lung: false, Pancreas: false, Cornea: true,
+      'Bone Marrow': true, Skin: false,
+    },
+  },
+  {
+    id: 'hosp_003',
+    name: 'Manipal Hospital HAL Airport Road',
+    city: 'Bengaluru',
+    address: '98, HAL Airport Road, Bengaluru 560017',
+    lat: 12.9592, lng: 77.6484,
+    phone: '+91 80 2502 4444',
+    emergencyServices: true,
+    beds: 600,
+    rating: 4.8,
+    organs: {
+      Kidney: true, Liver: true, Heart: true,
+      Lung: true, Pancreas: true, Cornea: true,
+      'Bone Marrow': false, Skin: true,
+    },
+  },
+  {
+    id: 'hosp_004',
+    name: 'Narayana Health City',
+    city: 'Bengaluru',
+    address: '258/A, Bommasandra Industrial Area, Bengaluru 560099',
+    lat: 12.8352, lng: 77.6782,
+    phone: '+91 80 7122 2200',
+    emergencyServices: true,
+    beds: 1000,
+    rating: 4.6,
+    organs: {
+      Kidney: false, Liver: true, Heart: false,
+      Lung: false, Pancreas: false, Cornea: true,
+      'Bone Marrow': true, Skin: false,
+    },
+  },
+  {
+    id: 'hosp_005',
+    name: 'St. John\'s Medical College Hospital',
+    city: 'Bengaluru',
+    address: 'Sarjapur Road, Koramangala, Bengaluru 560034',
+    lat: 12.9342, lng: 77.6198,
+    phone: '+91 80 2206 5000',
+    emergencyServices: true,
+    beds: 1250,
+    rating: 4.4,
+    organs: {
+      Kidney: true, Liver: false, Heart: false,
+      Lung: false, Pancreas: true, Cornea: false,
+      'Bone Marrow': false, Skin: true,
+    },
+  },
+  {
+    id: 'hosp_006',
+    name: 'Sakra World Hospital',
+    city: 'Bengaluru',
+    address: 'Devarabisanahalli, Outer Ring Road, Bengaluru 560103',
+    lat: 12.9445, lng: 77.6913,
+    phone: '+91 80 4969 4969',
+    emergencyServices: false,
+    beds: 300,
+    rating: 4.5,
+    organs: {
+      Kidney: true, Liver: true, Heart: false,
+      Lung: false, Pancreas: false, Cornea: true,
+      'Bone Marrow': false, Skin: false,
+    },
+  },
+];
+
+// ─── Seeder Functions ─────────────────────────
+function log(msg, type = 'info') {
+  const logEl = document.getElementById('seed-log');
+  const span = document.createElement('div');
+  span.className = `log-${type}`;
+  span.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+window.clearLog = function() {
+  document.getElementById('seed-log').innerHTML = '<span class="log-info">► Log cleared.</span>';
+};
+
+async function writeBloodBanks() {
+  log('Seeding blood banks…', 'info');
+  for (const bank of BLOOD_BANKS) {
+    try {
+      const { id, ...data } = bank;
+      await setDoc(doc(db, 'blood_bank', id), {
+        ...data,
+        updatedAt: serverTimestamp(),
+      });
+      log(`✓ ${bank.bankName}`, 'ok');
+    } catch(e) {
+      log(`✗ ${bank.bankName}: ${e.message}`, 'err');
+    }
+  }
+  log(`Blood banks done (${BLOOD_BANKS.length} records)`, 'ok');
+}
+
+async function writeHospitals() {
+  log('Seeding hospitals…', 'info');
+  for (const hosp of HOSPITALS) {
+    try {
+      const { id, ...data } = hosp;
+      await setDoc(doc(db, 'hospitals', id), {
+        ...data,
+        updatedAt: serverTimestamp(),
+      });
+      log(`✓ ${hosp.name}`, 'ok');
+    } catch(e) {
+      log(`✗ ${hosp.name}: ${e.message}`, 'err');
+    }
+  }
+  log(`Hospitals done (${HOSPITALS.length} records)`, 'ok');
+}
+
+window.seedBloodBanks = async function() {
+  document.getElementById('seed-all-btn').disabled = true;
+  await writeBloodBanks();
+  document.getElementById('seed-all-btn').disabled = false;
+};
+
+window.seedHospitals = async function() {
+  document.getElementById('seed-all-btn').disabled = true;
+  await writeHospitals();
+  document.getElementById('seed-all-btn').disabled = false;
+};
+
+window.seedAll = async function() {
+  const btn = document.getElementById('seed-all-btn');
+  btn.textContent = 'Seeding…';
+  btn.disabled = true;
+  await writeBloodBanks();
+  await writeHospitals();
+  log('═══ All data seeded successfully! ═══', 'ok');
+  btn.textContent = '✅ Seed Complete';
+  setTimeout(() => { btn.textContent = '🌱 Seed All Data (Blood Banks + Hospitals)'; btn.disabled = false; }, 3000);
+};
+</script>
+</body>
+</html>

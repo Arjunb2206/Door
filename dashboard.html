@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Dashboard</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+</head>
+<body class="bg-dots" data-page="dashboard">
+
+<script type="module">
+import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
+         getBloodBankInventory, getHospitalsWithOrgans } from './firebase-db.js';
+import { injectShell, updateLocationDisplay, initMap } from './shell.js';
+
+injectShell();
+
+let currentUser = null;
+let currentProfile = null;
+let userCoords = [12.9716, 77.5946];
+let dashMap = null;
+
+// ─── Auth Guard ────────────────────────────
+onAuthChange(async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  currentProfile = await getUserProfile(user.uid);
+  populateUI();
+  startGeolocation();
+  loadDashboardData();
+
+  // Simulate incoming emergency notification for donors after 12s
+  setTimeout(() => {
+    if (currentProfile && currentProfile.willDonate && currentProfile.emergencyNotifications !== false) {
+      document.getElementById('notif-title').textContent = '🚨 Emergency Blood Request';
+      document.getElementById('notif-body').textContent =
+        `A patient nearby urgently needs ${currentProfile.bloodType} blood. You are listed as a willing donor. Can you help?`;
+      document.getElementById('notif-overlay').classList.remove('hidden');
+    }
+  }, 12000);
+});
+
+document.getElementById('sign-out-btn').addEventListener('click', async () => {
+  await logoutUser(); window.location.href = 'login.html';
+});
+
+// ─── UI population ─────────────────────────
+function populateUI() {
+  const p = currentProfile;
+  if (!p) return;
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = p.name);
+  document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = p.name[0].toUpperCase());
+  document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = p.bloodType);
+  document.getElementById('dash-blood').textContent = p.bloodType;
+  document.getElementById('dash-donate-status').textContent = p.willDonate ? '● Active' : '● Inactive';
+  document.getElementById('dash-donate-status').className = `badge badge-${p.willDonate ? 'green' : 'amber'}`;
+}
+
+// ─── Geolocation ───────────────────────────
+function startGeolocation() {
+  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(pos => {
+    userCoords = [pos.coords.latitude, pos.coords.longitude];
+    updateLocationDisplay(userCoords);
+    if (currentUser) updateUserLocation(currentUser.uid, userCoords[0], userCoords[1]);
+    initDashMap();
+  }, () => {
+    updateLocationDisplay(userCoords);
+    initDashMap();
+  });
+}
+
+// ─── Load Firestore data ───────────────────
+async function loadDashboardData() {
+  const [banks, hospitals] = await Promise.all([
+    getBloodBankInventory(),
+    getHospitalsWithOrgans(),
+  ]);
+
+  // Count total blood units across all banks
+  const totalUnits = banks.reduce((sum, b) => {
+    return sum + Object.values(b.inventory || {}).reduce((s, v) => s + v, 0);
+  }, 0);
+
+  document.getElementById('stat-blood-banks').textContent = banks.length;
+  document.getElementById('stat-blood-units').textContent = totalUnits;
+  document.getElementById('stat-hospitals').textContent = hospitals.length;
+  document.getElementById('stat-organ-hospitals').textContent =
+    hospitals.filter(h => Object.values(h.organs||{}).some(v => v)).length;
+}
+
+// ─── Dashboard Map ─────────────────────────
+async function initDashMap() {
+  const mapEl = document.getElementById('dash-map');
+  if (!mapEl || mapEl._leaflet_id) return;
+  dashMap = initMap('dash-map', userCoords);
+
+  const hospitals = await getHospitalsWithOrgans();
+  const banks     = await getBloodBankInventory();
+
+  hospitals.forEach(h => {
+    const icon = L.divIcon({
+      html: `<div style="background:#00D4FF;color:#0A0E14;font-size:1rem;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.5);">🏥</div>`,
+      iconSize: [36,36], iconAnchor: [18,18], className: '',
+    });
+    L.marker([h.lat, h.lng], { icon })
+      .bindPopup(`<b>🏥 ${h.name}</b><br>${h.address || ''}<br>Rating: ⭐ ${h.rating || '—'}`, { className: 'dark-popup' })
+      .addTo(dashMap);
+  });
+
+  banks.forEach(b => {
+    const icon = L.divIcon({
+      html: `<div style="background:#E8192C;color:white;font-size:0.75rem;font-weight:700;width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 12px rgba(232,25,44,0.6);">🩸</div>`,
+      iconSize: [36,36], iconAnchor: [18,18], className: '',
+    });
+    const totalUnits = Object.values(b.inventory||{}).reduce((s,v)=>s+v,0);
+    L.marker([b.lat, b.lng], { icon })
+      .bindPopup(`<b>🩸 ${b.bankName}</b><br>${b.address||''}<br>Total Units: ${totalUnits}`, { className: 'dark-popup' })
+      .addTo(dashMap);
+  });
+}
+</script>
+
+<!-- PAGE CONTENT injected after shell by JS -->
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+
+  <!-- Header -->
+  <div class="dash-header">
+    <div class="dash-greeting">Good day</div>
+    <h1 class="dash-title">Welcome, <span class="user-name-display text-red">User</span></h1>
+    <p class="dash-subtitle">Your emergency network is active within a <strong style="color:var(--white)">3km radius</strong></p>
+  </div>
+
+  <!-- Emergency Banner -->
+  <div class="emergency-banner">
+    <span style="font-size:1.2rem;animation:iconPulse 1s infinite">🚨</span>
+    <div style="flex:1;">
+      <div style="font-weight:700;color:white;font-size:0.92rem;">Emergency Services Active</div>
+      <div style="font-size:0.78rem;color:rgba(255,255,255,0.75);">Real-time matching · Location tracking · Secure comms</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:0.5rem;">
+      <div class="status-dot online"></div>
+      <span style="font-size:0.78rem;color:rgba(255,255,255,0.8);">Live</span>
+    </div>
+  </div>
+
+  <!-- Stats Row -->
+  <div class="stats-row">
+    <div class="stat-card">
+      <div class="stat-label">Blood Banks</div>
+      <div class="stat-value text-red" id="stat-blood-banks">—</div>
+      <div class="stat-change">Registered banks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Blood Units Available</div>
+      <div class="stat-value text-accent" id="stat-blood-units">—</div>
+      <div class="stat-change">Across all banks</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Hospitals</div>
+      <div class="stat-value text-amber" id="stat-hospitals">—</div>
+      <div class="stat-change">Emergency services</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Organ Available</div>
+      <div class="stat-value text-green" id="stat-organ-hospitals">—</div>
+      <div class="stat-change">Hospitals with organs</div>
+    </div>
+  </div>
+
+  <!-- Action Cards -->
+  <div class="section-header">
+    <div class="section-title-group"><h2>Emergency Actions</h2><small>Tap any card to access the service</small></div>
+  </div>
+  <div class="action-grid">
+    <a href="blood.html" class="action-card" style="--card-accent:var(--red);--icon-bg:var(--red-glow);text-decoration:none;">
+      <div class="action-arrow">↗</div>
+      <div class="action-card-icon">🩸</div>
+      <h3>Blood Locator</h3>
+      <p>Find blood banks with available units. View real-time inventory by type.</p>
+      <div style="margin-top:1rem;"><span class="badge badge-red">● Live Search</span></div>
+    </a>
+    <a href="organ.html" class="action-card" style="--card-accent:#7B2FFF;--icon-bg:rgba(123,47,255,0.12);text-decoration:none;">
+      <div class="action-arrow">↗</div>
+      <div class="action-card-icon">🫀</div>
+      <h3>Organ Request</h3>
+      <p>Hospital-grade organ matching system. Submit urgent organ requests.</p>
+      <div style="margin-top:1rem;"><span class="badge" style="background:rgba(123,47,255,0.15);color:#9B6FFF;">● Priority Match</span></div>
+    </a>
+    <a href="directory.html" class="action-card" style="--card-accent:var(--accent);--icon-bg:var(--accent-dim);text-decoration:none;">
+      <div class="action-arrow">↗</div>
+      <div class="action-card-icon">🏥</div>
+      <h3>Medical Directory</h3>
+      <p>Locate nearby hospitals and emergency services.</p>
+      <div style="margin-top:1rem;"><span class="badge badge-blue">● Hospitals</span></div>
+    </a>
+    <a href="professional.html" class="action-card" style="--card-accent:var(--green);--icon-bg:rgba(18,217,138,0.12);text-decoration:none;">
+      <div class="action-arrow">↗</div>
+      <div class="action-card-icon">👨‍⚕️</div>
+      <h3>Professional Services</h3>
+      <p>Find specialist doctors and 24/7 pharmacies within your vicinity.</p>
+      <div style="margin-top:1rem;"><span class="badge badge-green">● Doctors & Pharma</span></div>
+    </a>
+  </div>
+
+  <!-- Live Map -->
+  <div class="section-header" style="margin-top:0.5rem;">
+    <div class="section-title-group"><h2>Live Area Map</h2><small>Blood banks &amp; hospitals within 3km</small></div>
+  </div>
+  <div class="map-container">
+    <div class="map-toolbar">
+      <div class="map-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>Blood Banks</div>
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Hospitals</div>
+      </div>
+      <div style="display:flex;align-items:center;gap:0.5rem;font-size:0.75rem;color:var(--green);">
+        <div class="status-dot online"></div> Live tracking
+      </div>
+    </div>
+    <div id="dash-map" style="width:100%;height:420px;"></div>
+  </div>
+
+  <!-- User Status -->
+  <div style="margin-top:1.5rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.8rem;">
+        <div class="avatar user-avatar-char" style="width:42px;height:42px;font-size:1rem;">A</div>
+        <div>
+          <div class="user-name-display" style="font-weight:600;"></div>
+          <div class="badge badge-red user-blood-display" id="dash-blood" style="margin-top:0.2rem;font-family:var(--font-mono);">O+</div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:0.6rem 0.8rem;background:var(--dark-4);border-radius:8px;">
+        <div style="font-size:0.85rem;">Willing to Donate</div>
+        <span class="badge badge-green" id="dash-donate-status">● Active</span>
+      </div>
+    </div>
+    <div class="card">
+      <div style="font-size:0.75rem;color:var(--slate);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.8rem;">Your Location</div>
+      <div class="user-location-display font-mono" style="font-size:0.82rem;color:var(--white);word-break:break-all;">Detecting…</div>
+      <div style="margin-top:0.6rem;display:flex;align-items:center;gap:0.5rem;">
+        <div class="status-dot online"></div>
+        <span style="font-size:0.78rem;color:var(--green);">GPS Active · 3km zone enabled</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+@keyframes iconPulse { 0%,100%{transform:scale(1);} 50%{transform:scale(1.15);} }
+</style>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DoOr – Medical Directory</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+</head>
+<body class="bg-dots" data-page="directory">
+
+<script type="module">
+import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
+         getHospitalsWithOrgans } from './firebase-db.js';
+import { injectShell, updateLocationDisplay, initMap } from './shell.js';
+
+injectShell();
+
+let currentUser = null;
+let userCoords = [12.9716, 77.5946];
+let dirMap = null;
+let allHospitals = [];
+
+onAuthChange(async user => {
+  if (!user) { window.location.href = 'login.html'; return; }
+  currentUser = user;
+  const profile = await getUserProfile(user.uid);
+  if (profile) {
+    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = profile.name);
+    document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = profile.name[0].toUpperCase());
+  }
+  startGeo();
+});
+
+document.getElementById('sign-out-btn').addEventListener('click', async () => {
+  await logoutUser(); window.location.href = 'login.html';
+});
+
+function startGeo() {
+  const fallback = () => { updateLocationDisplay(userCoords); loadData(); };
+  if (!navigator.geolocation) { fallback(); return; }
+  navigator.geolocation.getCurrentPosition(pos => {
+    userCoords = [pos.coords.latitude, pos.coords.longitude];
+    updateLocationDisplay(userCoords);
+    if (currentUser) updateUserLocation(currentUser.uid, userCoords[0], userCoords[1]);
+    loadData();
+  }, fallback);
+}
+
+async function loadData() {
+  allHospitals = await getHospitalsWithOrgans();
+  initDirMap();
+  renderHospitals(allHospitals);
+}
+
+function initDirMap() {
+  const mapEl = document.getElementById('directory-map');
+  if (!mapEl || mapEl._leaflet_id) return;
+  dirMap = initMap('directory-map', userCoords);
+  allHospitals.forEach(h => {
+    const icon = L.divIcon({
+      html: `<div style="background:#00D4FF;color:#0A0E14;font-size:1rem;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);box-shadow:0 4px 12px rgba(0,0,0,0.5);">🏥</div>`,
+      iconSize:[36,36], iconAnchor:[18,18], className:'',
+    });
+    L.marker([h.lat,h.lng],{icon})
+      .bindPopup(`<b>🏥 ${h.name}</b><br>${h.address||''}<br>Beds: ${h.beds||'—'}<br>⭐ ${h.rating||'—'}`, {className:'dark-popup'})
+      .addTo(dirMap);
+  });
+}
+
+function renderHospitals(hospitals) {
+  const list = document.getElementById('hospital-list');
+  if (!list) return;
+  if (!hospitals.length) {
+    list.innerHTML = `<div style="text-align:center;padding:2rem;color:var(--slate);">No hospitals found</div>`;
+    return;
+  }
+  list.innerHTML = hospitals.map(h => `
+    <div class="donor-card card-hover">
+      <div class="donor-blood-badge" style="background:rgba(0,212,255,0.12);border-color:rgba(0,212,255,0.3);color:var(--accent);font-size:1.1rem;">🏥</div>
+      <div class="donor-info">
+        <div class="donor-name-masked">${h.name}</div>
+        <div class="donor-distance">📍 ${h.address||h.city||'—'} · ⭐ ${h.rating||'—'} · Beds: ${h.beds||'—'}</div>
+        <div style="margin-top:0.3rem;">
+          ${h.emergencyServices ? '<span class="badge badge-red">🚨 Emergency</span>' : '<span class="badge badge-blue">Scheduled</span>'}
+        </div>
+      </div>
+      ${h.phone ? `<button class="btn btn-accent btn-sm" onclick="window.open('tel:${h.phone}')">📞 Call</button>` : ''}
+    </div>
+  `).join('');
+}
+
+window.searchDirectory = function() {
+  const q = document.getElementById('directory-search').value.toLowerCase();
+  const filtered = allHospitals.filter(h => h.name.toLowerCase().includes(q) || (h.address||'').toLowerCase().includes(q));
+  renderHospitals(filtered);
+};
+
+window.switchTab = function(group, tab) {
+  document.querySelectorAll(`[data-tab-group="${group}"]`).forEach(b => b.classList.toggle('active', b.dataset.tab===tab));
+  document.querySelectorAll(`[data-tab-pane-group="${group}"]`).forEach(p => p.classList.toggle('active', p.dataset.tabPane===tab));
+};
+</script>
+
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+  <div class="dash-header">
+    <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
+    <h1>🏥 Medical Directory</h1>
+    <p>Hospitals from Firebase within your 3km zone</p>
+  </div>
+
+  <div class="search-bar" style="margin-bottom:1.2rem;">
+    <span class="search-icon">🔍</span>
+    <input id="directory-search" type="text" placeholder="Search hospitals…" oninput="searchDirectory()" />
+  </div>
+
+  <div class="map-container" style="margin-bottom:1.5rem;">
+    <div class="map-toolbar">
+      <div class="map-legend">
+        <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>Hospitals</div>
+      </div>
+      <div style="font-size:0.72rem;color:var(--green);display:flex;align-items:center;gap:0.4rem;">
+        <div class="status-dot online"></div> Live tracking
+      </div>
+    </div>
+    <div id="directory-map" style="width:100%;height:380px;"></div>
+  </div>
+
+  <div id="hospital-list" class="donor-result-list">
+    <div class="spinner"></div>
+  </div>
+</div>
+</body>
+</html>
