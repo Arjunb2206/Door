@@ -13,7 +13,9 @@
 <script type="module">
 import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
          getHospitalsWithOrgans, getHospitalsByOrgan,
-         submitOrganRequest } from './firebase-db.js';
+         submitOrganRequest, db } from './firebase-db.js';
+import { collection, getDocs, query, where }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { injectShell, updateLocationDisplay, initMap } from './shell.js';
 
 injectShell();
@@ -28,9 +30,12 @@ onAuthChange(async user => {
   if (!user) { window.location.href = 'login.html'; return; }
   currentUser = user;
   const profile = await getUserProfile(user.uid);
-  if (profile) {
-    document.querySelectorAll('.user-name-display').forEach(el => el.textContent = profile.name);
-    document.querySelectorAll('.user-avatar-char').forEach(el => el.textContent = profile.name[0].toUpperCase());
+  const displayName = profile?.name || user.displayName || 'User';
+  const initial     = displayName[0]?.toUpperCase() || 'U';
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = displayName);
+  document.querySelectorAll('.user-avatar-char').forEach(el  => el.textContent = initial);
+  if (profile?.bloodType) {
+    document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = profile.bloodType);
   }
   startGeolocation();
 });
@@ -54,6 +59,43 @@ async function loadOrganData() {
   allHospitals = await getHospitalsWithOrgans();
   initOrganMap();
   renderHospitalList(allHospitals);
+  loadOrganDonors();
+}
+
+async function loadOrganDonors() {
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), where('isOrganDonor', '==', true)));
+    const donors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderOrganDonors(donors);
+  } catch(e) { console.warn('organ donors load failed', e); }
+}
+
+function renderOrganDonors(donors) {
+  const list = document.getElementById('organ-donor-list');
+  if (!list) return;
+  if (!donors.length) {
+    list.innerHTML = '<div style="color:var(--slate);font-size:0.85rem;padding:1rem;">No registered organ donors yet.</div>';
+    return;
+  }
+  list.innerHTML = donors.map(d => {
+    const name  = d.name || 'Anonymous';
+    const city  = d.city || 'Nearby';
+    const blood = d.bloodType || '—';
+    return `
+    <div class="donor-card card-hover">
+      <div class="donor-blood-badge" style="background:rgba(123,47,255,0.15);border-color:rgba(123,47,255,0.4);color:#9B6FFF;">🫀</div>
+      <div class="donor-info">
+        <div class="donor-name-masked" style="color:var(--white);">🔒 ${name.split(' ')[0]} ${name.split(' ')[1]?.[0] || ''}.</div>
+        <div class="donor-distance">
+          📍 ${city} &nbsp;·&nbsp;
+          <span class="badge badge-red font-mono" style="font-size:0.68rem;">${blood}</span>
+        </div>
+      </div>
+      <div>
+        <span class="badge" style="background:rgba(123,47,255,0.15);color:#9B6FFF;">● Organ Donor</span>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function initOrganMap() {
@@ -313,6 +355,21 @@ window.submitOrganRequest = async function() {
       </div>
     </div>
   </div>
+</div>
+
+  <!-- Registered Organ Donors from Database -->
+  <div style="margin-top:2rem;">
+    <div class="section-header">
+      <div class="section-title-group">
+        <h3>🫀 Registered Organ Donors</h3>
+        <small>Members from Devanahalli &amp; Doddaballapur who have opted in as organ donors</small>
+      </div>
+    </div>
+    <div id="organ-donor-list" class="donor-result-list">
+      <div class="spinner"></div>
+    </div>
+  </div>
+
 </div>
 </body>
 </html>
