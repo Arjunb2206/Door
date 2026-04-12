@@ -111,14 +111,29 @@ async function loadBloodData() {
 }
 
 // ── Real-time donor list via onSnapshot ────────────────────
+// Fetch ALL users, filter client-side to avoid Firestore index requirements
 function startRealtimeDonors() {
-  const q = query(collection(db, 'users'), where('willDonate', '==', true));
-  onSnapshot(q, snap => {
+  onSnapshot(collection(db, 'users'), snap => {
     const donors = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(d => d.id !== currentUser?.uid); // exclude self
+      .filter(d =>
+        d.id !== currentUser?.uid &&           // exclude self
+        d.willDonate !== false &&               // include if willDonate is true/undefined
+        d.bloodType && d.bloodType !== '—'     // must have a real blood type
+      );
     renderDonorMembers(donors);
   });
+}
+
+// ── Blood group color mapping ───────────────────────────────
+function bloodColor(blood) {
+  const map = {
+    'O-':'#FF4757','O+':'#E8192C',
+    'A+':'#FF6B35','A-':'#FF8C00',
+    'B+':'#9B6FFF','B-':'#7B2FFF',
+    'AB+':'#00D4FF','AB-':'#00A8CC',
+  };
+  return map[blood] || '#E8192C';
 }
 
 // ── Render donor cards with prominent blood group ──────────
@@ -127,29 +142,56 @@ function renderDonorMembers(donors) {
   if (!list) return;
 
   const countEl = document.getElementById('donor-count');
-  if (countEl) countEl.textContent = donors.length;
+  if (countEl) countEl.textContent = donors.length + (currentProfile?.bloodType ? ' donors' : ' donors');
 
-  if (!donors.length) {
+  // ── Always show the current user's own card first ────────
+  let selfCard = '';
+  if (currentProfile?.bloodType && currentProfile.bloodType !== '—') {
+    const blood   = currentProfile.bloodType;
+    const bColor  = bloodColor(blood);
+    const name    = currentProfile.name || 'You';
+    selfCard = `
+    <div class="donor-row" style="border-color:rgba(18,217,138,0.4);background:rgba(18,217,138,0.05);">
+      <div class="blood-group-badge"
+           style="color:${bColor};border-color:${bColor};background:${bColor}22;
+                  font-size:${blood.length>2?'0.88rem':'1.2rem'};
+                  box-shadow:0 0 18px ${bColor}55;">
+        ${blood}
+      </div>
+      <div class="donor-meta">
+        <div class="donor-name" style="color:var(--green);">⭐ You (${name.split(' ')[0]})</div>
+        <div class="donor-sub">Your registered blood type · Visible to others when willing to donate</div>
+        <div class="donor-sub" style="margin-top:0.1rem;">
+          <span class="badge badge-green" style="font-size:0.62rem;padding:0.1rem 0.45rem;">● Your Profile</span>
+          ${currentProfile.isOrganDonor ? '<span class="badge badge-blue" style="font-size:0.62rem;padding:0.1rem 0.45rem;margin-left:0.3rem;">Organ Donor</span>' : ''}
+        </div>
+      </div>
+      <a href="profile.html" class="btn btn-outline btn-sm">Edit Profile</a>
+    </div>`;
+  }
+
+  if (!donors.length && !selfCard) {
     list.innerHTML = `<div class="donor-row" style="justify-content:center;color:var(--slate);">
       No donors registered yet. Seed the database first.</div>`;
     return;
   }
 
-  list.innerHTML = donors.map(d => {
-    const name  = d.name  || 'Anonymous Donor';
-    const blood = d.bloodType || '?';
-    const city  = d.city  || 'Nearby';
-    const phone = d.phone || '';
-    // Mask: show first name + last initial only
-    const parts    = name.trim().split(' ');
-    const masked   = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
-    const bloodCol = blood === 'O-' ? '#FF6B6B' : blood === 'AB+' ? '#9B6FFF' : 'var(--red)';
+  const donorCards = donors.map(d => {
+    const name   = d.name  || 'Anonymous Donor';
+    const blood  = d.bloodType || '?';
+    const city   = d.city  || 'Nearby';
+    const bColor = bloodColor(blood);
+    // Privacy mask: "Ravi S." format
+    const parts  = name.trim().split(' ');
+    const masked = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
 
     return `
     <div class="donor-row">
-      <!-- BLOOD GROUP — large badge -->
-      <div class="blood-group-badge" style="color:${bloodCol};border-color:${bloodCol}33;
-           background:${bloodCol}18;font-size:${blood.length>2?'0.9rem':'1.15rem'};">
+      <!-- BLOOD GROUP BADGE — large, color-coded per type -->
+      <div class="blood-group-badge"
+           style="color:${bColor};border-color:${bColor};background:${bColor}1A;
+                  font-size:${blood.length>2?'0.88rem':'1.2rem'};
+                  box-shadow:0 0 14px ${bColor}44;">
         ${blood}
       </div>
 
@@ -178,6 +220,8 @@ function renderDonorMembers(donors) {
       </div>
     </div>`;
   }).join('');
+
+  list.innerHTML = selfCard + donorCards;
 }
 
 // ── Map ─────────────────────────────────────────────────────
