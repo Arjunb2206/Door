@@ -67,11 +67,12 @@ export async function registerUser(email, password, profile) {
     uid:                    cred.user.uid,
     name:                   profile.name,
     email:                  email,
-    phone:                  profile.phone || "",
-    bloodType:              profile.bloodType,
-    willDonate:             profile.willDonate ?? true,
+    phone:                  profile.phone  || "",
+    bloodType:              profile.bloodType || "",     // e.g. "O+", "B-"
+    willDonate:             profile.willDonate === true, // always strict boolean
     isOrganDonor:           false,
     emergencyNotifications: true,
+    city:                   profile.city || "Bengaluru",
     location:               null,
     createdAt:              serverTimestamp(),
     updatedAt:              serverTimestamp(),
