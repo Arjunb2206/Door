@@ -7,43 +7,115 @@
   <link rel="stylesheet" href="styles.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <style>
+    .organ-page-grid {
+      display: grid;
+      grid-template-columns: 420px 1fr;
+      gap: 1.5rem;
+      align-items: start;
+    }
+    @media (max-width:960px) { .organ-page-grid { grid-template-columns: 1fr; } }
+
+    /* Hospital card — compact & fixed height */
+    .hosp-card {
+      background: var(--dark-3);
+      border: 1px solid rgba(255,255,255,0.07);
+      border-radius: 12px; padding: 1rem;
+      margin-bottom: 0.7rem; transition: border-color 0.2s;
+    }
+    .hosp-card:hover { border-color: rgba(0,212,255,0.3); }
+    .hosp-card .hosp-header { display:flex; align-items:flex-start; gap:0.8rem; margin-bottom:0.6rem; }
+    .hosp-icon { width:40px;height:40px;border-radius:10px;background:var(--accent-dim);
+                 border:1px solid rgba(0,212,255,0.25);display:flex;align-items:center;
+                 justify-content:center;font-size:1.1rem;flex-shrink:0; }
+    .hosp-name { font-weight:600;font-size:0.9rem;color:var(--white);line-height:1.3; }
+    .hosp-addr { font-size:0.75rem;color:var(--slate);margin-top:0.15rem; }
+    .hosp-actions { display:flex;gap:0.4rem;margin-top:0.7rem;flex-wrap:wrap; }
+
+    /* Organ donor row */
+    .od-row {
+      background: var(--dark-3); border:1px solid rgba(123,47,255,0.15);
+      border-radius:12px; padding:0.9rem 1rem;
+      display:flex; align-items:center; gap:1rem; margin-bottom:0.6rem;
+      transition: border-color 0.2s;
+    }
+    .od-row:hover { border-color: rgba(123,47,255,0.4); }
+    .od-blood {
+      width:50px;height:50px;border-radius:12px;flex-shrink:0;
+      background:rgba(123,47,255,0.15);border:2px solid rgba(123,47,255,0.35);
+      display:flex;align-items:center;justify-content:center;
+      font-family:var(--font-mono);font-weight:700;color:#9B6FFF;font-size:1rem;
+    }
+    .realtime-dot { display:inline-block;width:7px;height:7px;border-radius:50%;
+                    background:var(--green);box-shadow:0 0 6px var(--green);
+                    animation:pulse-dot 2s infinite;margin-right:4px; }
+
+    /* Scrollable hospital list on right */
+    #organ-hospital-list { max-height:520px; overflow-y:auto; padding-right:4px; }
+    #organ-donor-list    { max-height:400px; overflow-y:auto; padding-right:4px; }
+    #organ-hospital-list::-webkit-scrollbar,
+    #organ-donor-list::-webkit-scrollbar    { width:4px; }
+    #organ-hospital-list::-webkit-scrollbar-thumb,
+    #organ-donor-list::-webkit-scrollbar-thumb { background:var(--dark-4); border-radius:4px; }
+  </style>
 </head>
 <body class="bg-dots" data-page="organ">
 
 <script type="module">
 import { onAuthChange, getUserProfile, logoutUser, updateUserLocation,
          getHospitalsWithOrgans, getHospitalsByOrgan,
-         submitOrganRequest, db } from './firebase-db.js';
-import { collection, getDocs, query, where }
+         submitOrganRequest, listenOrganRequests, db } from './firebase-db.js';
+import { collection, query, where, onSnapshot, addDoc, serverTimestamp }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { injectShell, updateLocationDisplay, initMap } from './shell.js';
 
 injectShell();
 
-let currentUser = null;
-let userCoords = [12.9716, 77.5946];
-let organMap = null;
-let allHospitals = [];
-let mapMarkers = [];
+let currentUser    = null;
+let currentProfile = null;
+let userCoords     = [13.2459, 77.7116];
+let organMap       = null;
+let allHospitals   = [];
+let mapMarkers     = [];
 
+// ── Auth ────────────────────────────────────────────────────
 onAuthChange(async user => {
   if (!user) { window.location.href = 'login.html'; return; }
-  currentUser = user;
-  const profile = await getUserProfile(user.uid);
-  const displayName = profile?.name || user.displayName || 'User';
-  const initial     = displayName[0]?.toUpperCase() || 'U';
-  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = displayName);
+  currentUser    = user;
+  window._currentUid = user.uid;
+  currentProfile = await getUserProfile(user.uid);
+
+  const name    = currentProfile?.name || user.displayName || 'User';
+  const initial = name[0]?.toUpperCase() || 'U';
+  document.querySelectorAll('.user-name-display').forEach(el => el.textContent = name);
   document.querySelectorAll('.user-avatar-char').forEach(el  => el.textContent = initial);
-  if (profile?.bloodType) {
-    document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = profile.bloodType);
+  if (currentProfile?.bloodType) {
+    document.querySelectorAll('.user-blood-display').forEach(el => el.textContent = currentProfile.bloodType);
   }
+
   startGeolocation();
+
+  // ── Real-time listener: incoming organ requests → popup to matching donors ──
+  if (currentProfile?.isOrganDonor) {
+    listenOrganRequests(reqs => {
+      if (reqs.length > 0) {
+        const latest = reqs[0];
+        if (latest.requesterId !== currentUser.uid) {
+          document.getElementById('notif-title').textContent = '🫀 Organ Request Received!';
+          document.getElementById('notif-body').textContent  =
+            `Urgent ${latest.organType} needed (Blood: ${latest.bloodType}). Hospital: ${latest.hospitalName}. Urgency: ${latest.urgency?.toUpperCase()}.`;
+          document.getElementById('notif-overlay').classList.remove('hidden');
+        }
+      }
+    });
+  }
 });
 
 document.getElementById('sign-out-btn').addEventListener('click', async () => {
   await logoutUser(); window.location.href = 'login.html';
 });
 
+// ── Geolocation ─────────────────────────────────────────────
 function startGeolocation() {
   const fallback = () => { updateLocationDisplay(userCoords); loadOrganData(); };
   if (!navigator.geolocation) { fallback(); return; }
@@ -55,49 +127,114 @@ function startGeolocation() {
   }, fallback);
 }
 
+// ── Load ─────────────────────────────────────────────────────
 async function loadOrganData() {
   allHospitals = await getHospitalsWithOrgans();
   initOrganMap();
   renderHospitalList(allHospitals);
-  loadOrganDonors();
+  startRealtimeOrganDonors();
 }
 
-async function loadOrganDonors() {
-  try {
-    const snap = await getDocs(query(collection(db, 'users'), where('isOrganDonor', '==', true)));
-    const donors = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+// ── Real-time organ donor list ──────────────────────────────
+function startRealtimeOrganDonors() {
+  const q = query(collection(db, 'users'), where('isOrganDonor', '==', true));
+  onSnapshot(q, snap => {
+    const donors = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(d => d.id !== currentUser?.uid);
     renderOrganDonors(donors);
-  } catch(e) { console.warn('organ donors load failed', e); }
+    const cnt = document.getElementById('donor-count-organ');
+    if (cnt) cnt.textContent = donors.length;
+  });
 }
 
+// ── Render organ donors ──────────────────────────────────────
 function renderOrganDonors(donors) {
   const list = document.getElementById('organ-donor-list');
   if (!list) return;
   if (!donors.length) {
-    list.innerHTML = '<div style="color:var(--slate);font-size:0.85rem;padding:1rem;">No registered organ donors yet.</div>';
+    list.innerHTML = `<div class="od-row" style="color:var(--slate);font-size:0.85rem;">
+      No organ donors registered yet.</div>`;
     return;
   }
   list.innerHTML = donors.map(d => {
     const name  = d.name || 'Anonymous';
-    const city  = d.city || 'Nearby';
     const blood = d.bloodType || '—';
+    const city  = d.city || 'Nearby';
+    const parts  = name.trim().split(' ');
+    const masked = parts[0] + (parts[1] ? ' ' + parts[1][0] + '.' : '');
     return `
-    <div class="donor-card card-hover">
-      <div class="donor-blood-badge" style="background:rgba(123,47,255,0.15);border-color:rgba(123,47,255,0.4);color:#9B6FFF;">🫀</div>
-      <div class="donor-info">
-        <div class="donor-name-masked" style="color:var(--white);">🔒 ${name.split(' ')[0]} ${name.split(' ')[1]?.[0] || ''}.</div>
-        <div class="donor-distance">
-          📍 ${city} &nbsp;·&nbsp;
-          <span class="badge badge-red font-mono" style="font-size:0.68rem;">${blood}</span>
+    <div class="od-row">
+      <div class="od-blood">${blood}</div>
+      <div style="flex:1;">
+        <div style="font-weight:600;font-size:0.9rem;color:var(--white);">
+          <span class="realtime-dot"></span>🔒 ${masked}
         </div>
+        <div style="font-size:0.75rem;color:var(--slate);margin-top:0.15rem;">
+          📍 ${city}
+          &nbsp;·&nbsp;<span class="badge" style="background:rgba(123,47,255,0.15);color:#9B6FFF;font-size:0.6rem;">Organ Donor</span>
+        </div>
+        ${d.willDonate ? '<div style="font-size:0.72rem;margin-top:0.1rem;"><span class="badge badge-red" style="font-size:0.6rem;">Blood Donor</span></div>' : ''}
       </div>
-      <div>
-        <span class="badge" style="background:rgba(123,47,255,0.15);color:#9B6FFF;">● Organ Donor</span>
+      <div style="display:flex;flex-direction:column;gap:0.35rem;">
+        <button class="btn btn-primary btn-sm" style="font-size:0.75rem;padding:0.35rem 0.7rem;"
+          onclick="requestOrganFromDonor('${d.id}','${blood}','${masked}')">Request</button>
+        <button class="btn btn-outline btn-sm" style="font-size:0.75rem;padding:0.35rem 0.7rem;"
+          onclick="openChatWithDonor('${d.id}','${masked}')">💬 Chat</button>
       </div>
     </div>`;
   }).join('');
 }
 
+// ── Hospital list ─────────────────────────────────────────────
+function renderHospitalList(hospitals) {
+  const list = document.getElementById('organ-hospital-list');
+  if (!list) return;
+  if (!hospitals.length) {
+    list.innerHTML = `<div class="hosp-card" style="text-align:center;color:var(--slate);">
+      No hospitals found.</div>`;
+    return;
+  }
+  list.innerHTML = hospitals.map(h => {
+    const organs    = h.organs || {};
+    const avail     = Object.entries(organs).filter(([,v])=>v).map(([k])=>k);
+    const unavail   = Object.entries(organs).filter(([,v])=>!v).map(([k])=>k);
+    const chips     = [
+      ...avail.map(o   => `<span class="organ-chip avail">✓ ${o}</span>`),
+      ...unavail.map(o => `<span class="organ-chip unavail">${o}</span>`),
+    ].join('');
+
+    return `
+    <div class="hosp-card">
+      <div class="hosp-header">
+        <div class="hosp-icon">🏥</div>
+        <div style="flex:1;min-width:0;">
+          <div class="hosp-name">${h.name}</div>
+          <div class="hosp-addr">📍 ${h.address||h.city||'—'}</div>
+          ${h.phone?`<div class="hosp-addr">📞 ${h.phone}</div>`:''}
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          ${h.emergencyServices?'<span class="badge badge-red" style="font-size:0.62rem;">🚨 ER</span>':'<span class="badge badge-blue" style="font-size:0.62rem;">Scheduled</span>'}
+          ${h.rating?`<div style="font-size:0.7rem;color:var(--slate);margin-top:0.3rem;">⭐ ${h.rating} · ${h.beds||'—'} beds</div>`:''}
+        </div>
+      </div>
+
+      <div style="font-size:0.7rem;color:var(--slate);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.35rem;">Organs Available</div>
+      <div class="organ-chips" style="margin-bottom:0.7rem;">${chips||'<span style="color:var(--slate);font-size:0.8rem;">No data</span>'}</div>
+
+      <div class="hosp-actions">
+        <button class="btn btn-outline btn-sm" style="font-size:0.75rem;padding:0.35rem 0.7rem;"
+          onclick="focusHospital(${h.lat},${h.lng})">📍 Map</button>
+        ${h.phone?`<button class="btn btn-accent btn-sm" style="font-size:0.75rem;padding:0.35rem 0.7rem;"
+          onclick="callHospital('${h.phone}','${h.name}')">📞 Call</button>`:''}
+        <button class="btn btn-primary btn-sm" style="font-size:0.75rem;padding:0.35rem 0.7rem;"
+          onclick="prefillHospital('${h.name}')">🫀 Request</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ── Map ──────────────────────────────────────────────────────
 function initOrganMap() {
   const mapEl = document.getElementById('organ-map');
   if (!mapEl || mapEl._leaflet_id) return;
@@ -114,104 +251,73 @@ function plotHospitalMarkers(hospitals) {
   if (!organMap) return;
   clearMarkers();
   hospitals.forEach(h => {
-    const organCount = Object.values(h.organs||{}).filter(v=>v).length;
-    const col = organCount > 3 ? '#00D4FF' : organCount > 0 ? '#FFB830' : '#8899AA';
+    const cnt  = Object.values(h.organs||{}).filter(v=>v).length;
+    const col  = cnt>3?'#00D4FF':cnt>0?'#FFB830':'#8899AA';
     const icon = L.divIcon({
-      html: `<div style="background:${col};color:#0A0E14;font-size:1rem;width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.4);box-shadow:0 4px 16px rgba(0,0,0,0.5);">🏥</div>`,
-      iconSize:[38,38], iconAnchor:[19,19], className:'',
+      html: `<div style="background:${col};color:#0A0E14;font-size:1rem;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.35);box-shadow:0 4px 12px rgba(0,0,0,0.5);">🏥</div>`,
+      iconSize:[36,36], iconAnchor:[18,18], className:'',
     });
-    const availOrgans = Object.entries(h.organs||{}).filter(([,v])=>v).map(([k])=>k).join(', ') || 'None';
-    const m = L.marker([h.lat, h.lng], { icon })
-      .bindPopup(`
-        <b>🏥 ${h.name}</b><br>
-        ${h.address||''}<br>
-        📞 ${h.phone||'—'}<br>
-        <b>Organs:</b> ${availOrgans}<br>
-        Emergency: ${h.emergencyServices ? '✅' : '❌'}
-      `, { className: 'dark-popup' })
+    const avail = Object.entries(h.organs||{}).filter(([,v])=>v).map(([k])=>k).join(', ')||'None';
+    const m = L.marker([h.lat,h.lng],{icon})
+      .bindPopup(`<b>🏥 ${h.name}</b><br>${h.address||''}<br><b>Organs:</b> ${avail}`,{className:'dark-popup'})
       .addTo(organMap);
     mapMarkers.push(m);
   });
 }
 
-// ─── Render hospital list ──────────────────
-function renderHospitalList(hospitals) {
-  const list = document.getElementById('organ-hospital-list');
-  if (!list) return;
+// ── Window functions ─────────────────────────────────────────
+window.focusHospital = (lat,lng) => organMap.flyTo([lat,lng],16,{animate:true,duration:0.8});
 
-  if (hospitals.length === 0) {
-    list.innerHTML = `<div class="card" style="text-align:center;padding:2rem;">
-      <div style="font-size:2.5rem;margin-bottom:0.8rem;">🔍</div>
-      <p>No hospitals found for this organ type.</p>
-    </div>`;
-    return;
-  }
-
-  list.innerHTML = hospitals.map(h => {
-    const organs = h.organs || {};
-    const availOrgans = Object.entries(organs).filter(([,v])=>v).map(([k])=>k);
-    const unavailOrgans = Object.entries(organs).filter(([,v])=>!v).map(([k])=>k);
-    const organChips = [
-      ...availOrgans.map(o => `<span class="organ-chip avail">✓ ${o}</span>`),
-      ...unavailOrgans.map(o => `<span class="organ-chip unavail">${o}</span>`),
-    ].join('');
-
-    return `
-      <div class="card card-hover" style="margin-bottom:1rem;">
-        <div style="display:flex;align-items:flex-start;gap:1rem;margin-bottom:1rem;">
-          <div style="width:48px;height:48px;border-radius:12px;background:var(--accent-dim);border:1.5px solid rgba(0,212,255,0.3);display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0;">🏥</div>
-          <div style="flex:1;">
-            <div style="font-weight:700;font-size:1rem;">${h.name}</div>
-            <div style="font-size:0.8rem;color:var(--slate);margin-top:0.2rem;">📍 ${h.address||h.city||'—'}</div>
-            ${h.phone ? `<div style="font-size:0.8rem;color:var(--slate);">📞 ${h.phone}</div>` : ''}
-          </div>
-          <div style="text-align:right;">
-            ${h.emergencyServices ? '<span class="badge badge-red">🚨 Emergency</span>' : '<span class="badge badge-blue">Scheduled</span>'}
-            ${h.rating ? `<div style="font-size:0.72rem;color:var(--slate);margin-top:0.4rem;">⭐ ${h.rating} · ${h.beds||'—'} beds</div>` : ''}
-          </div>
-        </div>
-        <div style="margin-bottom:0.8rem;">
-          <div style="font-size:0.75rem;color:var(--slate);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:0.5rem;">Organ Availability</div>
-          <div class="organ-chips">${organChips || '<span style="color:var(--slate);font-size:0.82rem;">No data available</span>'}</div>
-        </div>
-        <div style="display:flex;gap:0.6rem;justify-content:flex-end;">
-          <button class="btn btn-outline btn-sm" onclick="focusHospital(${h.lat},${h.lng})">📍 View on Map</button>
-          <button class="btn btn-accent btn-sm" onclick="callHospital('${h.phone||''}','${h.name}')">📞 Call</button>
-          <button class="btn btn-primary btn-sm" onclick="prefillHospital('${h.name}')">🫀 Request Organ</button>
-        </div>
-      </div>`;
-  }).join('');
-}
-
-window.focusHospital = function(lat, lng) {
-  organMap.flyTo([lat,lng], 16, { animate: true, duration: 0.8 });
+window.callHospital = (phone,name) => {
+  showToast(`📞 Calling ${name}…`,'info');
+  if (phone) setTimeout(()=>window.open(`tel:${phone}`),500);
 };
 
-window.callHospital = function(phone, name) {
-  showToast(`📞 Initiating call to ${name}…`, 'info');
-  if (phone) setTimeout(() => window.open(`tel:${phone}`), 500);
-};
-
-window.prefillHospital = function(name) {
+window.prefillHospital = name => {
   document.getElementById('organ-hospital').value = name;
-  document.getElementById('organ-hospital').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('organ-form-section').scrollIntoView({behavior:'smooth',block:'start'});
 };
 
-// ─── Filter by organ type ──────────────────
 window.filterByOrgan = async function() {
-  const organ = document.getElementById('organ-filter').value;
-  let results;
-  if (organ) {
-    results = await getHospitalsByOrgan(organ);
-  } else {
-    results = allHospitals;
-  }
+  const organ   = document.getElementById('organ-filter').value;
+  const results = organ ? await getHospitalsByOrgan(organ) : allHospitals;
   renderHospitalList(results);
   plotHospitalMarkers(results);
-  showToast(`Found ${results.length} hospital(s) with ${organ||'organs'} available`, results.length>0?'success':'info');
+  showToast(`${results.length} hospital(s) found`, results.length>0?'success':'info');
 };
 
-// ─── Submit organ request ──────────────────
+window.requestOrganFromDonor = async function(donorId, blood, maskedName) {
+  if (!currentUser) return;
+  const organ   = document.getElementById('organ-type').value  || 'Organ';
+  const urgency = document.getElementById('organ-urgency').value || 'urgent';
+  try {
+    await addDoc(collection(db, 'organ_requests'), {
+      requesterId:   currentUser.uid,
+      requesterName: currentProfile?.name || 'Anonymous',
+      targetDonorId: donorId,
+      organType:     organ,
+      bloodType:     blood,
+      urgency,
+      hospitalName:  document.getElementById('organ-hospital').value || 'Not specified',
+      notes:         document.getElementById('organ-notes').value || '',
+      lat:  userCoords[0], lng: userCoords[1],
+      status:    'pending',
+      createdAt: serverTimestamp(),
+    });
+    // Popup to the REQUESTER
+    document.getElementById('notif-title').textContent = '✅ Organ Request Sent!';
+    document.getElementById('notif-body').textContent  =
+      `Your ${organ} request has been sent to ${maskedName} (Blood: ${blood}).\n\nUrgency: ${urgency.toUpperCase()}. They will receive an immediate notification. Use Chat to coordinate.`;
+    document.getElementById('notif-overlay').classList.remove('hidden');
+    showToast(`Request sent to ${maskedName}!`, 'success');
+  } catch(e) { showToast('Failed: ' + e.message, 'error'); }
+};
+
+window.openChatWithDonor = function(donorId, name) {
+  const roomId = [currentUser.uid, donorId].sort().join('_');
+  openChat(name, roomId);
+};
+
 window.submitOrganRequest = async function() {
   const organ    = document.getElementById('organ-type').value;
   const blood    = document.getElementById('organ-blood').value;
@@ -219,61 +325,54 @@ window.submitOrganRequest = async function() {
   const hospital = document.getElementById('organ-hospital').value.trim();
   const notes    = document.getElementById('organ-notes').value.trim();
 
-  if (!organ || !blood) { showToast('Please fill in required fields', 'error'); return; }
+  if (!organ || !blood) { showToast('Please fill in required fields','error'); return; }
 
-  const submitBtn = document.getElementById('submit-organ-btn');
-  submitBtn.textContent = 'Submitting…';
-  submitBtn.disabled = true;
+  const btn = document.getElementById('submit-organ-btn');
+  btn.textContent = 'Submitting…'; btn.disabled = true;
 
   try {
     await submitOrganRequest({
-      requesterId:  currentUser.uid,
-      organType:    organ,
-      bloodType:    blood,
-      urgency,
+      requesterId: currentUser.uid,
+      organType: organ, bloodType: blood, urgency,
       hospitalName: hospital || 'Not specified',
-      notes,
-      lat: userCoords[0],
-      lng: userCoords[1],
+      notes, lat: userCoords[0], lng: userCoords[1],
     });
-    showToast('Organ request submitted. Matching hospitals notified!', 'success');
 
-    // Trigger pop-up notification to simulate hospital response
-    setTimeout(() => {
-      document.getElementById('notif-title').textContent = '🏥 Organ Request Received';
-      document.getElementById('notif-body').textContent =
-        `Your urgent ${organ} (${blood}) request has been submitted. ${urgency === 'critical' ? 'Emergency teams are being alerted immediately.' : 'Hospitals are reviewing your request.'}`;
-      document.getElementById('notif-overlay').classList.remove('hidden');
-    }, 800);
+    // Popup to the REQUESTER confirming receipt
+    document.getElementById('notif-title').textContent = '🏥 Request Submitted!';
+    document.getElementById('notif-body').textContent  =
+      `Your ${organ} request (${blood}, ${urgency.toUpperCase()}) has been submitted to ${hospital || 'all matching hospitals'}.\n\n${urgency==='critical'?'🚨 Emergency teams are being alerted NOW.':'Hospitals are reviewing your request and will respond shortly.'}`;
+    document.getElementById('notif-overlay').classList.remove('hidden');
 
     // Reset form
-    document.getElementById('organ-type').value = '';
-    document.getElementById('organ-blood').value = '';
-    document.getElementById('organ-hospital').value = '';
-    document.getElementById('organ-notes').value = '';
+    ['organ-type','organ-blood','organ-hospital','organ-notes'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
   } catch(e) {
-    showToast('Failed to submit request: ' + e.message, 'error');
+    showToast('Failed: ' + e.message, 'error');
   } finally {
-    submitBtn.textContent = '🚨 Submit Emergency Request';
-    submitBtn.disabled = false;
+    btn.textContent = '🚨 Submit Emergency Request'; btn.disabled = false;
   }
 };
 </script>
 
-<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1200px;">
+<!-- ══ PAGE LAYOUT ══════════════════════════════════════════ -->
+<div style="margin-left:220px;margin-top:60px;padding:2rem;max-width:1300px;">
+
   <div class="dash-header">
     <a href="dashboard.html" class="btn btn-ghost btn-sm" style="margin-bottom:0.8rem;">← Back</a>
     <h1>🫀 Organ Request</h1>
-    <p>Hospital-grade organ matching · Live availability from Firebase · Instant notifications</p>
+    <p>Hospital-grade organ matching · Real-time donor list · Instant notifications to matched donors</p>
   </div>
 
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:1.5rem;align-items:start;">
-    <!-- LEFT: Form + Hospital List -->
-    <div>
-      <!-- Request Form -->
-      <div class="card" style="margin-bottom:1.2rem;">
-        <h3 style="margin-bottom:1.2rem;">New Organ Request</h3>
-        <div style="display:flex;flex-direction:column;gap:1rem;">
+  <div class="organ-page-grid">
+
+    <!-- LEFT COL: Form -->
+    <div id="organ-form-section">
+      <div class="card" style="margin-bottom:1rem;">
+        <h3 style="margin-bottom:1.1rem;">New Organ Request</h3>
+        <div style="display:flex;flex-direction:column;gap:0.9rem;">
           <div class="form-group">
             <label>Organ Required *</label>
             <select class="form-control" id="organ-type">
@@ -300,21 +399,23 @@ window.submitOrganRequest = async function() {
             </select>
           </div>
           <div class="form-group">
-            <label>Hospital / Requesting Institution</label>
-            <input class="form-control" id="organ-hospital" type="text" placeholder="Hospital name (or click hospital below)" />
+            <label>Hospital / Institution</label>
+            <input class="form-control" id="organ-hospital" type="text" placeholder="Auto-filled when you click a hospital →" />
           </div>
           <div class="form-group">
             <label>Additional Notes</label>
-            <textarea class="form-control" id="organ-notes" rows="3" placeholder="Patient details, compatibility notes…" style="resize:vertical;"></textarea>
+            <textarea class="form-control" id="organ-notes" rows="2" placeholder="Patient details, HLA type, compatibility notes…" style="resize:none;"></textarea>
           </div>
-          <button class="btn btn-primary btn-lg btn-full" id="submit-organ-btn" onclick="submitOrganRequest()">🚨 Submit Emergency Request</button>
+          <button class="btn btn-primary btn-lg btn-full" id="submit-organ-btn" onclick="submitOrganRequest()">
+            🚨 Submit Emergency Request
+          </button>
         </div>
       </div>
 
-      <!-- Filter by Organ -->
-      <div class="card" style="margin-bottom:1rem;padding:1rem;">
-        <div style="display:grid;grid-template-columns:1fr auto;gap:0.8rem;align-items:end;">
-          <div class="form-group">
+      <!-- Filter -->
+      <div class="card" style="padding:0.9rem;">
+        <div style="display:grid;grid-template-columns:1fr auto;gap:0.7rem;align-items:end;">
+          <div class="form-group" style="margin:0;">
             <label>Filter hospitals by organ</label>
             <select class="form-control" id="organ-filter">
               <option value="">All Organs</option>
@@ -326,14 +427,27 @@ window.submitOrganRequest = async function() {
           <button class="btn btn-accent" onclick="filterByOrgan()">Filter</button>
         </div>
       </div>
+
+      <!-- Organ Donors section -->
+      <div style="margin-top:1.2rem;">
+        <div class="section-header" style="margin-bottom:0.8rem;">
+          <div class="section-title-group">
+            <h3 style="font-size:1rem;">🫀 Registered Organ Donors
+              <span id="donor-count-organ" style="font-size:0.8rem;font-weight:400;color:var(--slate);margin-left:0.4rem;"></span>
+            </h3>
+            <small><span class="realtime-dot"></span>Live from Firebase</small>
+          </div>
+        </div>
+        <div id="organ-donor-list"><div class="spinner"></div></div>
+      </div>
     </div>
 
-    <!-- RIGHT: Map + Hospital List -->
+    <!-- RIGHT COL: Map + Hospital list -->
     <div>
       <div class="map-container" style="margin-bottom:1rem;">
         <div class="map-toolbar">
           <div class="map-legend">
-            <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>High Availability</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>High Avail.</div>
             <div class="legend-item"><div class="legend-dot" style="background:var(--amber)"></div>Limited</div>
             <div class="legend-item"><div class="legend-dot" style="background:var(--slate)"></div>None</div>
           </div>
@@ -341,35 +455,19 @@ window.submitOrganRequest = async function() {
             <div class="status-dot online"></div> Live
           </div>
         </div>
-        <div id="organ-map" style="width:100%;height:380px;"></div>
+        <div id="organ-map" style="width:100%;height:340px;"></div>
       </div>
 
-      <div class="section-header">
+      <div class="section-header" style="margin-bottom:0.8rem;">
         <div class="section-title-group">
-          <h3>🏥 Hospitals with Organ Availability</h3>
-          <small>Click a hospital to auto-fill the form</small>
+          <h3 style="font-size:1rem;">🏥 Hospitals with Organ Availability</h3>
+          <small>Click "Request" to auto-fill · Scroll to see all</small>
         </div>
       </div>
-      <div id="organ-hospital-list">
-        <div class="spinner"></div>
-      </div>
+      <div id="organ-hospital-list"><div class="spinner"></div></div>
     </div>
-  </div>
-</div>
 
-  <!-- Registered Organ Donors from Database -->
-  <div style="margin-top:2rem;">
-    <div class="section-header">
-      <div class="section-title-group">
-        <h3>🫀 Registered Organ Donors</h3>
-        <small>Members from Devanahalli &amp; Doddaballapur who have opted in as organ donors</small>
-      </div>
-    </div>
-    <div id="organ-donor-list" class="donor-result-list">
-      <div class="spinner"></div>
-    </div>
   </div>
-
 </div>
 </body>
 </html>
