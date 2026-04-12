@@ -32,15 +32,16 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ─── Firebase Config ──────────────────────────
-// ⚠️  Replace with your actual Firebase project config from Firebase Console
-const firebaseConfig = {
-  apiKey:            "YOUR_API_KEY",
-  authDomain:        "YOUR_PROJECT.firebaseapp.com",
-  projectId:         "YOUR_PROJECT_ID",
-  storageBucket:     "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId:             "YOUR_APP_ID",
-};
+ const firebaseConfig = {
+    apiKey: "AIzaSyD9FutY0xnK5c9FkHT2td6I38xllpazmW8",
+    authDomain: "door-5e485.firebaseapp.com",
+    projectId: "door-5e485",
+    storageBucket: "door-5e485.firebasestorage.app",
+    messagingSenderId: "488274016045",
+    appId: "1:488274016045:web:f208b66eeab6c3129585a4",
+    measurementId: "G-WB015WMGVP"
+  };
+
 
 const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
