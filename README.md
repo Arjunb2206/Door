@@ -3,8 +3,8 @@
 ---
 
 ## 📱 Live Application
-Website: https://arjunb2206.github.io/Door/login.html
-Repository: https://github.com/Arjunb2206/Door
+• **Website**: https://arjunb2206.github.io/Door/login.html
+• **Repository**: https://github.com/Arjunb2206/Door
 
 ---
 
@@ -201,9 +201,9 @@ Technologies:
 ---
 
 ### 🎨 Designed & 🤝 Collaborated by :
--(Yashwanth Kumar N) https://github.com/Yashwanth-2006F
--(Bayineni Bhargav Naidu) https://github.com/bhargavnaidubayineni
--(Adithya K P) https://github.com/Adithya20-afk
+**-(Yashwanth Kumar N) https://github.com/Yashwanth-2006F**
+**-(Bayineni Bhargav Naidu) https://github.com/bhargavnaidubayineni**
+**-(Adithya K P) https://github.com/Adithya20-afk**
  
 ---
 
