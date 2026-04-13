@@ -1,12 +1,10 @@
 # DoOr – Donor & Organ Resource Platform
 
----
 
 ## 📱 Live Application
-• **Website**: https://arjunb2206.github.io/Door/login.html
-• **Repository**: https://github.com/Arjunb2206/Door
+- **Website :** https://arjunb2206.github.io/Door/login.html
+- **Repository :** https://github.com/Arjunb2206/Door
 
----
 
 ## 🎯 What It Does
 DoOr is an intelligent healthcare resource platform that:
@@ -17,7 +15,6 @@ DoOr is an intelligent healthcare resource platform that:
 - Sends emergency notifications to registered blood donors in need
 - Manages user profiles, donor status, and medical records securely
 
----
 
 ## 🛠️ Technologies Used
 
@@ -31,7 +28,6 @@ DoOr is an intelligent healthcare resource platform that:
 ### 3. Other Technologies & Services
 - GitHub Pages – Free static hosting
 
----
 
 ## 💻 Technical Stack
 
@@ -51,7 +47,6 @@ DoOr is an intelligent healthcare resource platform that:
 - Firebase Auth State – Guards all pages, persists user sessions
 - Firestore – All persistent data (profiles, requests, messages)
 
----
 
 ## 🏗️ Architecture
 
@@ -66,7 +61,6 @@ Flow:
 4. User submits blood/organ requests — written to Firestore, notifications triggered
 5. Emergency donors receive real-time alerts based on blood type match
 
----
 
 ## 📁 Project Structure
 
@@ -88,7 +82,6 @@ door-final/
 └── README.md               # This file
 ```
 
----
 
 ## 🔐 Features
 
@@ -117,7 +110,6 @@ door-final/
 - Built-in messaging via Firestore `onSnapshot` listeners
 - Scoped chat rooms per resource type
 
----
 
 ## 🚀 Deployment
 
@@ -129,7 +121,6 @@ Steps to Deploy:
 3. Select "main" branch and root folder
 4. Save — your site is live!
 
----
 
 ## 🔗 Navigation Flow
 
@@ -201,16 +192,16 @@ Technologies:
 ---
 
 ### 🎨 Designed & 🤝 Collaborated by :
-**-(Yashwanth Kumar N) https://github.com/Yashwanth-2006F**
-**-(Bayineni Bhargav Naidu) https://github.com/bhargavnaidubayineni**
-**-(Adithya K P) https://github.com/Adithya20-afk**
+- **(Yashwanth Kumar N) https://github.com/Yashwanth-2006F**
+- **(Bayineni Bhargav Naidu) https://github.com/bhargavnaidubayineni**
+- **(Adithya K P) https://github.com/Adithya20-afk**
  
 ---
 
 Maintained by :
 Contact:
--https://github.com/Yashwanth-2006F
--https://github.com/bhargavnaidubayineni
--https://github.com/Adithya20-afk
--https://github.com/Arjunb2206
+- https://github.com/Yashwanth-2006F
+- https://github.com/bhargavnaidubayineni
+- https://github.com/Adithya20-afk
+- https://github.com/Arjunb2206
 
